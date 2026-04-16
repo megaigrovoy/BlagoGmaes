@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NeonNinjaCat</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <div id="game-container">
+      <video id="webcam" autoplay playsinline></video>
+      <canvas id="game-canvas"></canvas>
+      <div id="ui-layer">
+        <div id="hud-game" class="hud-game is-hidden">
+          <h1 id="score-display">Score: 0</h1>
+          <div class="hud-row">
+            <span id="level-display"></span>
+            <button type="button" id="btn-back-menu" class="btn-menu">Меню</button>
+          </div>
+        </div>
+        <div id="main-menu" class="menu-overlay is-hidden">
+          <div class="menu-panel">
+            <img src="/src/assets/neoncat.webp" alt="NeonNinjaCat" class="menu-hero-img" width="480" height="480" />
+            <h2 class="menu-heading">Выберите уровень</h2>
+            <p class="menu-hint">Чем выше уровень, тем больше предметов одновременно на экране.</p>
+            <div id="level-grid" class="level-grid"></div>
+          </div>
+        </div>
+        <div id="loading" class="visible">
+          <img src="/src/assets/neoncat.webp" alt="Neon Cat" id="loading-image" />
+          <div id="loading-text">Loading Models...</div>
+          <div id="progress-container">
+            <div id="progress-bar"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
