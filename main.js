@@ -88,6 +88,13 @@ btnBackMenu.addEventListener('click', () => showMainMenu());
 const HAND_CONNECTIONS = HandLandmarker.HAND_CONNECTIONS;
 const POSE_CONNECTIONS = PoseLandmarker.POSE_CONNECTIONS;
 
+/** Линии между MCP соседних пальцев — сетка/«треугольник» в центре ладони (MediaPipe) */
+function isPalmCrossConnection(start, end) {
+    const s = Math.min(start, end);
+    const e = Math.max(start, end);
+    return (s === 5 && e === 9) || (s === 9 && e === 13) || (s === 13 && e === 17);
+}
+
 // Resize canvas to match window completely
 /** Logical game size (matches canvas buffer; avoids 100vh vs innerHeight stretch on mobile) */
 let gameLayout = { w: 800, h: 600, minSide: 600 };
@@ -890,6 +897,7 @@ function gameLoop(nowTime) {
             canvasCtx.shadowBlur = 20;
             
             for (const connection of HAND_CONNECTIONS) {
+                if (isPalmCrossConnection(connection.start, connection.end)) continue;
                 const a = getScreenPoint(landmarks[connection.start]);
                 const b = getScreenPoint(landmarks[connection.end]);
                 
