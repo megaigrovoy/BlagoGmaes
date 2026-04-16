@@ -49,7 +49,6 @@ function showMainMenu() {
     fruits.length = 0;
     particles.length = 0;
     prevFingertipsByKey.clear();
-    fingertipTrailByKey.clear();
     handKeyLastSeenMs.clear();
     tipVelocityByKey.clear();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
@@ -289,8 +288,10 @@ class Particle {
     }
 }
 
-// MediaPipe fingertip landmarks (same four as white glow dots: index..pinky)
+// MediaPipe fingertip landmarks (index..pinky) — slice hitboxes + claw draw
 const SLICE_FINGERTIP_INDICES = [8, 12, 16, 20];
+/** DIP joint used as “base” to aim claw along the finger (toward tip) */
+const TIP_CLAW_BASE = { 8: 7, 12: 11, 16: 15, 20: 19 };
 
 // Intersect a line segment and a circle
 function lineCircleCollide(a, b, circle) {
@@ -319,96 +320,51 @@ function lineCircleCollide(a, b, circle) {
     return distanceSq < (circle.radius * circle.radius);
 }
 
-const FINGERTIP_TRAIL_MAX = 40;
-const TRAIL_MIN_SEGMENTS = 2;
-const TRAIL_MAX_SEGMENTS = 22;
-/** Extra trail segments per px/frame between last two samples (speed → longer tail) */
-const TRAIL_SPEED_TO_LEN = 0.55;
-/** Samples per original span for Catmull–Rom resampling (higher = smoother) */
-const TRAIL_SAMPLES_PER_SPAN = 12;
-
-function catmullRomPoint(p0, p1, p2, p3, t) {
-    const t2 = t * t;
-    const t3 = t2 * t;
-    return {
-        x: 0.5 * (
-            2 * p1.x +
-            (-p0.x + p2.x) * t +
-            (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
-            (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3
-        ),
-        y: 0.5 * (
-            2 * p1.y +
-            (-p0.y + p2.y) * t +
-            (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
-            (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
-        )
-    };
-}
-
-/** Dense polyline along a smooth Catmull–Rom curve through key points */
-function resampleTrailSmooth(points, samplesPerSpan) {
-    const n = points.length;
-    if (n < 2) return points.slice();
-    if (n === 2) {
-        const out = [];
-        const steps = samplesPerSpan * 2;
-        for (let k = 0; k <= steps; k++) {
-            const t = k / steps;
-            out.push({
-                x: points[0].x + (points[1].x - points[0].x) * t,
-                y: points[0].y + (points[1].y - points[0].y) * t
-            });
-        }
-        return out;
+/** Three white claw prongs at the tip, pointing along the finger */
+function drawFingertipClaw(ctx, tip, proximal) {
+    let dx = tip.x - proximal.x;
+    let dy = tip.y - proximal.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 6) {
+        dx = 1;
+        dy = 0;
+    } else {
+        dx /= len;
+        dy /= len;
     }
-    const out = [];
-    const S = samplesPerSpan;
-    for (let i = 0; i < n - 1; i++) {
-        const p0 = i === 0 ? points[0] : points[i - 1];
-        const p1 = points[i];
-        const p2 = points[i + 1];
-        const p3 = i + 2 < n ? points[i + 2] : points[n - 1];
-        const kStart = i === 0 ? 0 : 1;
-        for (let k = kStart; k <= S; k++) {
-            const t = k / S;
-            out.push(catmullRomPoint(p0, p1, p2, p3, t));
-        }
-    }
-    return out;
-}
-
-function drawFingertipTrail(ctx, trail) {
-    if (trail.length < 2) return;
-    const pLast = trail[trail.length - 1];
-    const pPrev = trail[trail.length - 2];
-    const speed = Math.hypot(pLast.x - pPrev.x, pLast.y - pPrev.y);
-    let n = Math.round(TRAIL_MIN_SEGMENTS + speed * TRAIL_SPEED_TO_LEN);
-    n = Math.max(TRAIL_MIN_SEGMENTS, Math.min(TRAIL_MAX_SEGMENTS, trail.length, n));
-    const seg = trail.slice(-n);
-    const smooth = resampleTrailSmooth(seg, TRAIL_SAMPLES_PER_SPAN);
-    const L = smooth.length;
-    if (L < 2) return;
-
+    const baseAng = Math.atan2(dy, dx);
     ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (let i = 0; i < L - 1; i++) {
-        const u = (i + 0.5) / Math.max(1, L - 1);
-        ctx.globalAlpha = 0.06 + u * 0.4;
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 0.75 + u * 5.5;
+    ctx.translate(tip.x, tip.y);
+    ctx.rotate(baseAng);
+    ctx.fillStyle = '#f4f6ff';
+    ctx.strokeStyle = 'rgba(200, 215, 255, 0.92)';
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = 'rgba(0, 243, 255, 0.45)';
+    ctx.shadowBlur = 6;
+    const prongs = [
+        { rot: -0.34, reach: 17, half: 4.2 },
+        { rot: 0, reach: 23, half: 5 },
+        { rot: 0.34, reach: 17, half: 4.2 }
+    ];
+    for (const p of prongs) {
+        ctx.save();
+        ctx.rotate(p.rot);
         ctx.beginPath();
-        ctx.moveTo(smooth[i].x, smooth[i].y);
-        ctx.lineTo(smooth[i + 1].x, smooth[i + 1].y);
+        ctx.moveTo(0, -p.half);
+        ctx.lineTo(p.reach, 0);
+        ctx.lineTo(0, p.half);
+        ctx.closePath();
+        ctx.fill();
         ctx.stroke();
+        ctx.restore();
     }
+    ctx.shadowBlur = 0;
     ctx.restore();
 }
 
 /**
  * Stable id per physical hand. `landmarks` array order from MediaPipe can swap
- * between frames; handedness + wrist order keeps trail/prev state consistent.
+ * between frames; handedness + wrist order keeps prev/collision state consistent.
  */
 function buildKeyedHands(handResults) {
     const landmarks = handResults?.landmarks;
@@ -475,8 +431,6 @@ let currentHandResults = null;
 let currentPoseResults = null;
 /** Previous-frame fingertip positions: Map<handKey, { 8: {x,y}, ... }> */
 let prevFingertipsByKey = new Map();
-/** Trail history: Map<handKey, { 8: [{x,y},...], ... }> */
-let fingertipTrailByKey = new Map();
 /** Last time this hand key was present in MediaPipe results (performance.now) */
 let handKeyLastSeenMs = new Map();
 /** Smoothed screen-space velocity per tip for short dropout extrapolation */
@@ -735,11 +689,6 @@ function gameLoop(nowTime) {
             prev = {};
             prevFingertipsByKey.set(key, prev);
         }
-        let trails = fingertipTrailByKey.get(key);
-        if (!trails) {
-            trails = {};
-            fingertipTrailByKey.set(key, trails);
-        }
         let velMap = tipVelocityByKey.get(key);
         if (!velMap) {
             velMap = {};
@@ -760,10 +709,6 @@ function gameLoop(nowTime) {
                 }
             }
             prev[tipIdx] = tip;
-            if (!trails[tipIdx]) trails[tipIdx] = [];
-            const t = trails[tipIdx];
-            t.push({ x: tip.x, y: tip.y });
-            if (t.length > FINGERTIP_TRAIL_MAX) t.shift();
         }
     }
 
@@ -773,9 +718,8 @@ function gameLoop(nowTime) {
         if (lastSeen === undefined || tPerf - lastSeen > HAND_LOST_GRACE_MS) continue;
 
         const prev = prevFingertipsByKey.get(key);
-        const trails = fingertipTrailByKey.get(key);
         const velMap = tipVelocityByKey.get(key);
-        if (!prev || !trails || !velMap) continue;
+        if (!prev || !velMap) continue;
 
         for (const tipIdx of SLICE_FINGERTIP_INDICES) {
             if (!prev[tipIdx]) continue;
@@ -786,11 +730,6 @@ function gameLoop(nowTime) {
             v.vy *= GHOST_VELOCITY_DAMP;
             appendSweepCollisionSegments(handSegments, prev[tipIdx], tip);
             prev[tipIdx] = tip;
-            const t = trails[tipIdx];
-            if (t) {
-                t.push({ x: tip.x, y: tip.y });
-                if (t.length > FINGERTIP_TRAIL_MAX) t.shift();
-            }
         }
     }
 
@@ -798,13 +737,12 @@ function gameLoop(nowTime) {
         const lastSeen = handKeyLastSeenMs.get(key);
         if (lastSeen !== undefined && tPerf - lastSeen > HAND_LOST_GRACE_MS) {
             prevFingertipsByKey.delete(key);
-            fingertipTrailByKey.delete(key);
             tipVelocityByKey.delete(key);
             handKeyLastSeenMs.delete(key);
         }
     }
 
-    // Draw Hands (same order as keyedHands so trails match physical hands)
+    // Draw Hands (same order as keyedHands)
     if (keyedHands.length > 0) {
         for (const { key, landmarks } of keyedHands) {
             canvasCtx.strokeStyle = '#ff00ea';
@@ -823,23 +761,11 @@ function gameLoop(nowTime) {
             }
             canvasCtx.shadowBlur = 0; // reset glow
 
-            const trailsForHand = fingertipTrailByKey.get(key) || {};
-            // White motion trails (longer when the tip moves faster)
             SLICE_FINGERTIP_INDICES.forEach((tipIndex) => {
-                const tr = trailsForHand[tipIndex];
-                if (tr) drawFingertipTrail(canvasCtx, tr);
-            });
-
-            // Draw fingertips glow (these tips are the slice hitboxes)
-            SLICE_FINGERTIP_INDICES.forEach(tipIndex => {
                 const tip = getScreenPoint(landmarks[tipIndex]);
-                canvasCtx.beginPath();
-                canvasCtx.arc(tip.x, tip.y, 8, 0, 2 * Math.PI);
-                canvasCtx.fillStyle = '#fff';
-                canvasCtx.fill();
-                canvasCtx.shadowBlur = 10;
-                canvasCtx.shadowColor = '#00f3ff';
-                canvasCtx.shadowBlur = 0; // reset
+                const baseIdx = TIP_CLAW_BASE[tipIndex];
+                const proximal = getScreenPoint(landmarks[baseIdx]);
+                drawFingertipClaw(canvasCtx, tip, proximal);
             });
         }
     }
