@@ -610,7 +610,7 @@ function gameLoop(nowTime) {
     );
 
     // Apply a dark tint
-    canvasCtx.fillStyle = 'rgba(0,0,0,0.75)';
+    canvasCtx.fillStyle = 'rgba(0,0,0,0.6)';
     canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
     function getScreenPoint(landmark) {
