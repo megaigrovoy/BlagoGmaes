@@ -88,11 +88,19 @@ btnBackMenu.addEventListener('click', () => showMainMenu());
 const HAND_CONNECTIONS = HandLandmarker.HAND_CONNECTIONS;
 const POSE_CONNECTIONS = PoseLandmarker.POSE_CONNECTIONS;
 
-/** Линии между MCP соседних пальцев — сетка/«треугольник» в центре ладони (MediaPipe) */
-function isPalmCrossConnection(start, end) {
-    const s = Math.min(start, end);
-    const e = Math.max(start, end);
-    return (s === 5 && e === 9) || (s === 9 && e === 13) || (s === 13 && e === 17);
+/**
+ * Короткий «каркас кисти» у BlazePose (запястье + пальцевые точки) — рисуется голубым
+ * рядом с рукой MediaPipe и даёт лишний треугольник. Линии предплечья 13–15 / 14–16 оставляем.
+ */
+function isPoseWristHandStubConnection(start, end) {
+    const a = Math.min(start, end);
+    const b = Math.max(start, end);
+    return (
+        (a === 15 && (b === 17 || b === 19 || b === 21)) ||
+        (a === 17 && b === 19) ||
+        (a === 16 && (b === 18 || b === 20 || b === 22)) ||
+        (a === 18 && b === 20)
+    );
 }
 
 // Resize canvas to match window completely
@@ -648,6 +656,7 @@ function gameLoop(nowTime) {
             for (const connection of POSE_CONNECTIONS) {
                 // Skip drawing face lines to replace them with Ninja Mask 
                 if (connection.start <= 10 && connection.end <= 10) continue;
+                if (isPoseWristHandStubConnection(connection.start, connection.end)) continue;
 
                 const a = getScreenPoint(landmarks[connection.start]);
                 const b = getScreenPoint(landmarks[connection.end]);
@@ -897,7 +906,6 @@ function gameLoop(nowTime) {
             canvasCtx.shadowBlur = 20;
             
             for (const connection of HAND_CONNECTIONS) {
-                if (isPalmCrossConnection(connection.start, connection.end)) continue;
                 const a = getScreenPoint(landmarks[connection.start]);
                 const b = getScreenPoint(landmarks[connection.end]);
                 
