@@ -25,8 +25,11 @@ const LEVELS = [
     { maxConcurrent: 2, spawnIntervalMs: 1900 },
     { maxConcurrent: 3, spawnIntervalMs: 1550 },
     { maxConcurrent: 4, spawnIntervalMs: 1250 },
-    { maxConcurrent: 5, spawnIntervalMs: 1050 }
+    { maxConcurrent: 5, spawnIntervalMs: 1050 },
+    { maxConcurrent: 6, spawnIntervalMs: 950 }
 ];
+/** Штраф за предмет, улетевший вниз несрезанным (симметрично +10 за рез) */
+const MISS_PENALTY = 10;
 let currentLevelIndex = 0;
 
 function getCurrentLevelConfig() {
@@ -947,6 +950,10 @@ function gameLoop(nowTime) {
 
         // Remove if out of bounds (bottom)
         if (fruit.y > gameLayout.h + 100) {
+            if (!fruit.isSliced) {
+                score = Math.max(0, score - MISS_PENALTY);
+                scoreDisplay.innerText = `Score: ${score}`;
+            }
             fruits.splice(i, 1);
         }
     }
