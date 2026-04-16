@@ -205,8 +205,13 @@ class Fruit {
         const { w, h, minSide } = gameLayout;
         this.x = Math.random() * w * 0.8 + w * 0.1;
         this.y = h + 50;
-        this.vx = (Math.random() - 0.5) * w * 0.01;
-        this.vy = -(Math.random() * 15 + 20);
+        const span = Math.min(w, h * 1.35);
+        this.vx = (Math.random() - 0.5) * span * 0.009;
+        this.gravity = 0.4;
+        const maxRise = h * 0.4 + 120;
+        const vyCap = Math.sqrt(2 * this.gravity * maxRise);
+        const vyWant = Math.random() * 11 + 13;
+        this.vy = -Math.min(vyWant, vyCap * 0.96);
         const rLo = minSide * 0.068;
         const rHi = minSide * 0.108;
         this.radius = Math.min(160, Math.max(36, rLo + Math.random() * (rHi - rLo)));
@@ -228,7 +233,6 @@ class Fruit {
         
         this.isSliced = false;
         this.sliceOffsetX = 0;
-        this.gravity = 0.4;
 
         this.rotation = Math.random() * Math.PI * 2;
         this.rotationSpeed = (Math.random() - 0.5) * 0.1; // Random spin speed
