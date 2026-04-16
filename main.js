@@ -264,27 +264,126 @@ class Fruit {
     }
 }
 
-class Particle {
+/** Radial “splash” at slice: rays + ring, decays quickly */
+class SliceBurst {
     constructor(x, y, color) {
         this.x = x;
         this.y = y;
-        this.vx = (Math.random() - 0.5) * 10;
-        this.vy = (Math.random() - 0.5) * 10;
-        this.life = 1.0;
         this.color = color;
+        this.life = 1;
+        this.rot = Math.random() * Math.PI * 2;
+    }
+    update(dt = 1) {
+        this.life -= 0.1 * dt;
+    }
+    draw(ctx) {
+        const t = Math.max(0, this.life);
+        if (t <= 0) return;
+        const u = 1 - t;
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rot);
+        const rays = 14;
+        ctx.globalAlpha = t * 0.95;
+        for (let r = 0; r < rays; r++) {
+            const a = (r / rays) * Math.PI * 2;
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 2.2;
+            ctx.shadowBlur = 16;
+            ctx.shadowColor = '#00f3ff';
+            ctx.beginPath();
+            const inner = 10 + u * 28;
+            const outer = 32 + u * 120;
+            ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+            ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
+            ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = t * 0.55;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 12 + u * 85, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = t * 0.35;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 8 + u * 40, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+/** kind: 'dot' — мягкое светящееся пятно; 'spark' — короткая яркая полоска-всплеск */
+class Particle {
+    constructor(x, y, color, kind = 'dot') {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.kind = kind;
+        this.life = 1;
+        const ang = Math.random() * Math.PI * 2;
+        if (kind === 'spark') {
+            const spd = 16 + Math.random() * 22;
+            this.vx = Math.cos(ang) * spd;
+            this.vy = Math.sin(ang) * spd;
+            this.sparkAngle = ang;
+            this.sparkLen = 14 + Math.random() * 20;
+            this.drag = 0.9;
+        } else {
+            this.vx = Math.cos(ang) * (3 + Math.random() * 10);
+            this.vy = Math.sin(ang) * (3 + Math.random() * 10);
+            this.r = 3.5 + Math.random() * 6;
+            this.drag = 0.985;
+        }
     }
     update(dt = 1) {
         this.x += this.vx * dt;
         this.y += this.vy * dt;
-        this.life -= 0.05 * dt;
+        this.vx *= this.drag;
+        this.vy *= this.drag;
+        this.life -= (this.kind === 'spark' ? 0.07 : 0.042) * dt;
     }
     draw(ctx) {
-        ctx.globalAlpha = Math.max(0, this.life);
-        ctx.fillStyle = this.color;
+        const a = Math.max(0, this.life);
+        if (a <= 0) return;
+        ctx.save();
+        if (this.kind === 'spark') {
+            ctx.globalAlpha = a;
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 2.8;
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = '#ffffff';
+            const L = this.sparkLen * (0.4 + 0.6 * a);
+            ctx.beginPath();
+            ctx.moveTo(
+                this.x - Math.cos(this.sparkAngle) * L * 0.35,
+                this.y - Math.sin(this.sparkAngle) * L * 0.35
+            );
+            ctx.lineTo(this.x + Math.cos(this.sparkAngle) * L, this.y + Math.sin(this.sparkAngle) * L);
+            ctx.stroke();
+            ctx.restore();
+            return;
+        }
+        const rad = this.r * (0.55 + 0.45 * a);
+        const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, rad);
+        g.addColorStop(0, 'rgba(255,255,255,0.95)');
+        g.addColorStop(0.25, this.color);
+        g.addColorStop(0.7, this.color);
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.globalAlpha = a;
+        ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
+        ctx.arc(this.x, this.y, rad, 0, Math.PI * 2);
         ctx.fill();
-        ctx.globalAlpha = 1.0;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = this.color;
+        ctx.globalAlpha = a * 0.5;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, rad * 0.35, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        ctx.restore();
     }
 }
 
@@ -797,9 +896,12 @@ function gameLoop(nowTime) {
                     score += 10;
                     scoreDisplay.innerText = `Score: ${score}`;
                     
-                    // Add particles
-                    for(let p=0; p<20; p++) {
-                        particles.push(new Particle(fruit.x, fruit.y, fruit.color));
+                    particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
+                    for (let p = 0; p < 26; p++) {
+                        particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'dot'));
+                    }
+                    for (let p = 0; p < 16; p++) {
+                        particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
                     }
                     break; // stop checking segments for this fruit
                 }
