@@ -86,12 +86,42 @@ const HAND_CONNECTIONS = HandLandmarker.HAND_CONNECTIONS;
 const POSE_CONNECTIONS = PoseLandmarker.POSE_CONNECTIONS;
 
 // Resize canvas to match window completely
-function resizeCanvas() {
-    canvasElement.width = window.innerWidth;
-    canvasElement.height = window.innerHeight;
+/** Logical game size (matches canvas buffer; avoids 100vh vs innerHeight stretch on mobile) */
+let gameLayout = { w: 800, h: 600, minSide: 600 };
+
+function readViewportSize() {
+    const vv = window.visualViewport;
+    const w = Math.max(1, Math.floor(vv?.width ?? window.innerWidth));
+    const h = Math.max(1, Math.floor(vv?.height ?? window.innerHeight));
+    return { w, h };
 }
+
+function resizeCanvas() {
+    const { w, h } = readViewportSize();
+    gameLayout.w = w;
+    gameLayout.h = h;
+    gameLayout.minSide = Math.min(w, h);
+
+    canvasElement.width = w;
+    canvasElement.height = h;
+    canvasElement.style.width = `${w}px`;
+    canvasElement.style.height = `${h}px`;
+
+    const gc = document.getElementById('game-container');
+    if (gc) {
+        gc.style.width = `${w}px`;
+        gc.style.height = `${h}px`;
+    }
+    document.documentElement.style.height = `${h}px`;
+    document.body.style.height = `${h}px`;
+    document.documentElement.style.width = `${w}px`;
+    document.body.style.width = `${w}px`;
+}
+
 window.addEventListener('resize', resizeCanvas);
-resizeCanvas(); // initial
+window.visualViewport?.addEventListener('resize', resizeCanvas);
+window.visualViewport?.addEventListener('scroll', resizeCanvas);
+resizeCanvas();
 
 async function setupWebcam() {
     return new Promise((resolve, reject) => {
@@ -172,11 +202,14 @@ initFruitTextures();
 
 class Fruit {
     constructor() {
-        this.x = Math.random() * window.innerWidth * 0.8 + window.innerWidth * 0.1;
-        this.y = window.innerHeight + 50;
-        this.vx = (Math.random() - 0.5) * window.innerWidth * 0.01;
-        this.vy = -(Math.random() * 15 + 20); // Jump slightly less for 30% smaller fruits
-        this.radius = 110 + Math.random() * 60; // 30% smaller fruits (radius ~110-170)
+        const { w, h, minSide } = gameLayout;
+        this.x = Math.random() * w * 0.8 + w * 0.1;
+        this.y = h + 50;
+        this.vx = (Math.random() - 0.5) * w * 0.01;
+        this.vy = -(Math.random() * 15 + 20);
+        const rLo = minSide * 0.068;
+        const rHi = minSide * 0.108;
+        this.radius = Math.min(160, Math.max(36, rLo + Math.random() * (rHi - rLo)));
         
         const fruitTypes = [
             { emoji: '🍌', color: '#ffe135' }, // Banana yellow
@@ -909,7 +942,7 @@ function gameLoop(nowTime) {
         }
 
         // Remove if out of bounds (bottom)
-        if (fruit.y > window.innerHeight + 100) {
+        if (fruit.y > gameLayout.h + 100) {
             fruits.splice(i, 1);
         }
     }
