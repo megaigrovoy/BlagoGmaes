@@ -208,10 +208,10 @@ class Fruit {
         const span = Math.min(w, h * 1.35);
         this.vx = (Math.random() - 0.5) * span * 0.009;
         this.gravity = 0.4;
-        const maxRise = h * 0.4 + 120;
+        const maxRise = h * 0.88 + 48;
         const vyCap = Math.sqrt(2 * this.gravity * maxRise);
-        const vyWant = Math.random() * 11 + 13;
-        this.vy = -Math.min(vyWant, vyCap * 0.96);
+        const vyWant = Math.random() * 14 + 16;
+        this.vy = -Math.min(vyWant, vyCap);
         const rLo = minSide * 0.068;
         const rHi = minSide * 0.108;
         this.radius = Math.min(160, Math.max(36, rLo + Math.random() * (rHi - rLo)));
