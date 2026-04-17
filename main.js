@@ -1,5 +1,26 @@
 import { FilesetResolver, HandLandmarker, PoseLandmarker } from '@mediapipe/tasks-vision';
 
+/** URL звука разреза на каждый эмодзи (6 файлов на 9 типов — часть клипов переиспользуется). */
+const sliceSoundUrlByEmoji = {
+    '🍌': new URL('./src/assets/sounds/Sound Of Fruit Slice.mp3', import.meta.url).href,
+    '🍎': new URL('./src/assets/sounds/Sound Of Fruit Slice 2.mp3', import.meta.url).href,
+    '🍉': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href,
+    '🍊': new URL('./src/assets/sounds/Sound Of Fruit Slice 4.mp3', import.meta.url).href,
+    '🍗': new URL('./src/assets/sounds/Sound Of Meat Slice.mp3', import.meta.url).href,
+    '🥩': new URL('./src/assets/sounds/Sound Of Meat Slice2.mp3', import.meta.url).href,
+    '🥦': new URL('./src/assets/sounds/Sound Of Fruit Slice 2.mp3', import.meta.url).href,
+    '🥬': new URL('./src/assets/sounds/Sound Of Fruit Slice.mp3', import.meta.url).href,
+    '🍆': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href
+};
+
+function playSliceSound(emoji) {
+    const src = sliceSoundUrlByEmoji[emoji];
+    if (!src) return;
+    const a = new Audio(src);
+    a.volume = 0.88;
+    void a.play().catch(() => {});
+}
+
 const video = document.getElementById('webcam');
 const canvasElement = document.getElementById('game-canvas');
 const canvasCtx = canvasElement.getContext('2d');
@@ -951,7 +972,8 @@ function gameLoop(nowTime) {
 
                     score += 10;
                     scoreDisplay.innerText = `Score: ${score}`;
-                    
+                    playSliceSound(fruit.emoji);
+
                     particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
                     for (let p = 0; p < 26; p++) {
                         particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'dot'));
