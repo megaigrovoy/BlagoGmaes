@@ -10,7 +10,8 @@ const sliceSoundUrlByEmoji = {
     '🥩': new URL('./src/assets/sounds/Sound Of Meat Slice2.mp3', import.meta.url).href,
     '🥦': new URL('./src/assets/sounds/Sound Of Fruit Slice 2.mp3', import.meta.url).href,
     '🥬': new URL('./src/assets/sounds/Sound Of Fruit Slice.mp3', import.meta.url).href,
-    '🍆': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href
+    '🍆': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href,
+    '🤖': new URL('./src/assets/sounds/Sound Of Fruit Slice 4.mp3', import.meta.url).href
 };
 
 function playSliceSound(emoji) {
@@ -18,6 +19,16 @@ function playSliceSound(emoji) {
     if (!src) return;
     const a = new Audio(src);
     a.volume = 0.88;
+    void a.play().catch(() => {});
+}
+
+function playRobotMetalHit(which) {
+    const src =
+        which === 1
+            ? new URL('./src/assets/sounds/Sound Of Metal Box Hit1.mp3', import.meta.url).href
+            : new URL('./src/assets/sounds/Sound Of Metal Box Hit2.mp3', import.meta.url).href;
+    const a = new Audio(src);
+    a.volume = 0.9;
     void a.play().catch(() => {});
 }
 
@@ -223,7 +234,7 @@ async function initializeModels() {
 const fruitEmojiTextures = {};
 
 function initFruitTextures() {
-    const emojis = ['🍌', '🍎', '🍉', '🍊', '🍗', '🥩', '🥦', '🥬', '🍆'];
+    const emojis = ['🍌', '🍎', '🍉', '🍊', '🍗', '🥩', '🥦', '🥬', '🍆', '🤖'];
     const size = 600; // max size matching largest fruit radius
     for(let e of emojis) {
         const c = document.createElement('canvas');
@@ -264,14 +275,21 @@ class Fruit {
             { emoji: '🥩', color: '#d32f2f' }, // Steak red
             { emoji: '🥦', color: '#4caf50' }, // Broccoli green
             { emoji: '🥬', color: '#8bc34a' }, // Cabbage light green
-            { emoji: '🍆', color: '#9c27b0' }  // Eggplant purple
+            { emoji: '🍆', color: '#9c27b0' }, // Eggplant purple
+            { emoji: '🤖', color: '#90caf9' } // Robot (металл / неон)
         ];
         const type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
         this.emoji = type.emoji;
         this.color = type.color;
-        
+        if (this.emoji === '🤖') {
+            this.radius = Math.min(240, this.radius * 1.5);
+        }
+
         this.isSliced = false;
+        this.isRobotQuad = false;
         this.sliceOffsetX = 0;
+        this.robotHits = 0;
+        this.hitFlash = 0;
 
         this.rotation = Math.random() * Math.PI * 2;
         this.rotationSpeed = (Math.random() - 0.5) * 0.1; // Random spin speed
@@ -279,8 +297,12 @@ class Fruit {
         this.cutAngle = 0;
         this.rot1 = 0;
         this.rot2 = 0;
+        this.rot3 = 0;
+        this.rot4 = 0;
         this.rotSpeed1 = 0;
         this.rotSpeed2 = 0;
+        this.rotSpeed3 = 0;
+        this.rotSpeed4 = 0;
     }
 
     update(dt = 1) {
@@ -288,13 +310,18 @@ class Fruit {
         this.y += this.vy * dt;
         this.vy += this.gravity * dt;
         
+        if (this.hitFlash > 0) this.hitFlash -= 0.35 * dt;
+
         if (!this.isSliced) {
             this.rotation += this.rotationSpeed * dt;
         } else {
             this.sliceOffsetX += 6 * dt; // Separate halves physically
-            // Independent tumbling
             this.rot1 += this.rotSpeed1 * dt;
             this.rot2 += this.rotSpeed2 * dt;
+            if (this.isRobotQuad) {
+                this.rot3 += this.rotSpeed3 * dt;
+                this.rot4 += this.rotSpeed4 * dt;
+            }
         }
     }
 
@@ -308,31 +335,50 @@ class Fruit {
         
         if (!this.isSliced) {
             ctx.rotate(this.rotation);
+            if (this.hitFlash > 0) {
+                ctx.shadowColor = '#00f3ff';
+                ctx.shadowBlur = 18 + this.hitFlash * 2;
+            }
             ctx.drawImage(texture, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+            ctx.shadowBlur = 0;
+        } else if (this.isRobotQuad) {
+            const hs = texSize / 2;
+            const dw = drawSize / 2;
+            const spread = this.sliceOffsetX * 0.58;
+            const quads = [
+                { sx: 0, sy: 0, rot: this.rot1, ang: 0 },
+                { sx: hs, sy: 0, rot: this.rot2, ang: Math.PI / 2 },
+                { sx: 0, sy: hs, rot: this.rot3, ang: Math.PI },
+                { sx: hs, sy: hs, rot: this.rot4, ang: (3 * Math.PI) / 2 }
+            ];
+            for (const q of quads) {
+                ctx.save();
+                const a = this.cutAngle + q.ang;
+                ctx.translate(Math.cos(a) * spread, Math.sin(a) * spread);
+                ctx.rotate(q.rot);
+                ctx.drawImage(texture, q.sx, q.sy, hs, hs, -dw / 2, -dw / 2, dw, dw);
+                ctx.restore();
+            }
         } else {
-            // Left half
             ctx.save();
-            // Move along the fixed cut axis towards the local left
             ctx.translate(Math.cos(this.cutAngle + Math.PI) * this.sliceOffsetX, Math.sin(this.cutAngle + Math.PI) * this.sliceOffsetX);
             ctx.rotate(this.rot1);
             ctx.drawImage(
                 texture,
-                0, 0, texSize / 2, texSize,                         // source
-                -drawSize / 2, -drawSize / 2,                       // destination x, y
-                drawSize / 2, drawSize                              // destination width, height
+                0, 0, texSize / 2, texSize,
+                -drawSize / 2, -drawSize / 2,
+                drawSize / 2, drawSize
             );
             ctx.restore();
 
-            // Right half
             ctx.save();
-            // Move along the fixed cut axis towards the local right
             ctx.translate(Math.cos(this.cutAngle) * this.sliceOffsetX, Math.sin(this.cutAngle) * this.sliceOffsetX);
             ctx.rotate(this.rot2);
             ctx.drawImage(
                 texture,
-                texSize / 2, 0, texSize / 2, texSize,               // source
-                0, -drawSize / 2,                                   // destination x, y
-                drawSize / 2, drawSize                              // destination width, height
+                texSize / 2, 0, texSize / 2, texSize,
+                0, -drawSize / 2,
+                drawSize / 2, drawSize
             );
             ctx.restore();
         }
@@ -963,6 +1009,44 @@ function gameLoop(nowTime) {
         if (!fruit.isSliced) {
             for (let seg of handSegments) {
                 if (lineCircleCollide(seg.a, seg.b, fruit)) {
+                    if (fruit.emoji === '🤖') {
+                        fruit.robotHits += 1;
+                        if (fruit.robotHits === 1) {
+                            playRobotMetalHit(1);
+                            fruit.hitFlash = 12;
+                            break;
+                        }
+                        if (fruit.robotHits === 2) {
+                            playRobotMetalHit(2);
+                            fruit.hitFlash = 12;
+                            break;
+                        }
+                        fruit.isSliced = true;
+                        fruit.isRobotQuad = true;
+                        fruit.cutAngle = fruit.rotation;
+                        fruit.rot1 = fruit.rotation + (Math.random() - 0.5) * 0.25;
+                        fruit.rot2 = fruit.rotation + (Math.random() - 0.5) * 0.25;
+                        fruit.rot3 = fruit.rotation + (Math.random() - 0.5) * 0.25;
+                        fruit.rot4 = fruit.rotation + (Math.random() - 0.5) * 0.25;
+                        fruit.rotSpeed1 = fruit.rotationSpeed - 0.08;
+                        fruit.rotSpeed2 = fruit.rotationSpeed + 0.07;
+                        fruit.rotSpeed3 = fruit.rotationSpeed - 0.04;
+                        fruit.rotSpeed4 = fruit.rotationSpeed + 0.09;
+
+                        score += 10;
+                        scoreDisplay.innerText = `Score: ${score}`;
+                        playSliceSound(fruit.emoji);
+
+                        particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
+                        for (let p = 0; p < 26; p++) {
+                            particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'dot'));
+                        }
+                        for (let p = 0; p < 16; p++) {
+                            particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
+                        }
+                        break;
+                    }
+
                     fruit.isSliced = true;
                     fruit.cutAngle = fruit.rotation;
                     fruit.rot1 = fruit.rotation;
@@ -981,7 +1065,7 @@ function gameLoop(nowTime) {
                     for (let p = 0; p < 16; p++) {
                         particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
                     }
-                    break; // stop checking segments for this fruit
+                    break;
                 }
             }
         }
