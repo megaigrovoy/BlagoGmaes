@@ -290,6 +290,8 @@ class Fruit {
         this.sliceOffsetX = 0;
         this.robotHits = 0;
         this.hitFlash = 0;
+        /** Путь «вошёл в предмет» vs «ещё внутри» — один рез на один проход руки */
+        this._wasTouchingHand = false;
 
         this.rotation = Math.random() * Math.PI * 2;
         this.rotationSpeed = (Math.random() - 0.5) * 0.1; // Random spin speed
@@ -1005,22 +1007,28 @@ function gameLoop(nowTime) {
         fruit.update(dt);
         fruit.draw(canvasCtx);
 
-        // Check collision if not sliced
+        // Рез: путь кончиков пересёк круг предмета (любой сегмент), но засчёт — на «входе» в контакт, не каждый кадр
         if (!fruit.isSliced) {
-            for (let seg of handSegments) {
+            let pathIntersectsFruit = false;
+            for (const seg of handSegments) {
                 if (lineCircleCollide(seg.a, seg.b, fruit)) {
-                    if (fruit.emoji === '🤖') {
-                        fruit.robotHits += 1;
-                        if (fruit.robotHits === 1) {
-                            playRobotMetalHit(1);
-                            fruit.hitFlash = 12;
-                            break;
-                        }
-                        if (fruit.robotHits === 2) {
-                            playRobotMetalHit(2);
-                            fruit.hitFlash = 12;
-                            break;
-                        }
+                    pathIntersectsFruit = true;
+                    break;
+                }
+            }
+            const cutStroke = pathIntersectsFruit && !fruit._wasTouchingHand;
+            fruit._wasTouchingHand = pathIntersectsFruit;
+
+            if (cutStroke) {
+                if (fruit.emoji === '🤖') {
+                    fruit.robotHits += 1;
+                    if (fruit.robotHits === 1) {
+                        playRobotMetalHit(1);
+                        fruit.hitFlash = 12;
+                    } else if (fruit.robotHits === 2) {
+                        playRobotMetalHit(2);
+                        fruit.hitFlash = 12;
+                    } else {
                         fruit.isSliced = true;
                         fruit.isRobotQuad = true;
                         fruit.cutAngle = fruit.rotation;
@@ -1044,9 +1052,8 @@ function gameLoop(nowTime) {
                         for (let p = 0; p < 16; p++) {
                             particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
                         }
-                        break;
                     }
-
+                } else {
                     fruit.isSliced = true;
                     fruit.cutAngle = fruit.rotation;
                     fruit.rot1 = fruit.rotation;
@@ -1065,7 +1072,6 @@ function gameLoop(nowTime) {
                     for (let p = 0; p < 16; p++) {
                         particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
                     }
-                    break;
                 }
             }
         }
