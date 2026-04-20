@@ -84,6 +84,34 @@ function getMediapipeWasmUrl() {
     return new URL('mediapipe-wasm', window.location.origin + base).href;
 }
 
+/**
+ * iOS/iPad: без успешного play() в цепочке жеста Safari глушит HTMLAudio из rAF (резы/музыка «без звука»).
+ * Возвращает Promise — в startLevel нужен await, иначе гонка с первым play игры.
+ */
+let htmlAudioUnlocked = false;
+function tryUnlockAudioOnUserGestureAsync() {
+    if (htmlAudioUnlocked) return Promise.resolve();
+    const silentWav =
+        'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+    try {
+        const a = new Audio(silentWav);
+        a.volume = 0.001;
+        const p = a.play();
+        if (p === undefined) {
+            htmlAudioUnlocked = true;
+            return Promise.resolve();
+        }
+        return p
+            .then(() => {
+                htmlAudioUnlocked = true;
+                a.pause();
+            })
+            .catch(() => {});
+    } catch (_) {
+        return Promise.resolve();
+    }
+}
+
 let menuMusicAudio = null;
 let gameMusicAudio = null;
 let gameMusicOnEnded = null;
@@ -224,7 +252,8 @@ function showMainMenu() {
     playMenuMusic();
 }
 
-function startLevel(levelIndex) {
+async function startLevel(levelIndex) {
+    await tryUnlockAudioOnUserGestureAsync();
     currentLevelIndex = Math.max(0, Math.min(LEVELS.length - 1, levelIndex));
     const cfg = getCurrentLevelConfig();
     score = 0;
@@ -251,7 +280,7 @@ LEVELS.forEach((cfg, i) => {
     btn.className = 'level-btn';
     const sub = cfg.onlyRobots ? 'тест · только роботы' : `одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
     btn.innerHTML = `<span class="level-title">Уровень ${i + 1}</span><span class="level-sub">${sub}</span>`;
-    btn.addEventListener('click', () => startLevel(i));
+    btn.addEventListener('click', () => void startLevel(i));
     levelGrid.appendChild(btn);
 });
 
@@ -262,11 +291,21 @@ mainMenu.addEventListener(
     'pointerdown',
     (e) => {
         if (isPlaying) return;
+        void tryUnlockAudioOnUserGestureAsync();
         if (e.target?.closest?.('.level-btn')) return;
         if (e.target?.closest?.('.menu-options')) return;
         playMenuMusic();
     },
     { capture: true }
+);
+
+/** iPad: touchstart раньше click — иначе тап только по уровню не открывал аудио-ворота */
+mainMenu.addEventListener(
+    'touchstart',
+    () => {
+        if (!isPlaying) void tryUnlockAudioOnUserGestureAsync();
+    },
+    { capture: true, passive: true }
 );
 
 const optSoundOff = document.getElementById('opt-sound-off');
