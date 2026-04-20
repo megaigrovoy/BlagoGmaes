@@ -1,5 +1,8 @@
 import { FilesetResolver, HandLandmarker, PoseLandmarker } from '@mediapipe/tasks-vision';
 
+/** Совпадает с dependencies в package.json — не @latest, стабильнее кэш CDN */
+const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
+
 const STORAGE_SFX_OFF = 'neon-ninja-sfx-off';
 const STORAGE_MUSIC_OFF = 'neon-ninja-music-off';
 
@@ -390,9 +393,13 @@ async function setupWebcam() {
     throw lastErr ?? new Error("Could not open webcam");
 }
 
+/** В консоли видно, не ушли ли оба лендмаркера на CPU (тогда FPS падает сильно) */
+let mediapipeHandDelegate = 'CPU';
+let mediapipePoseDelegate = 'CPU';
+
 async function initializeModels() {
     const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+        `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VISION_WASM_VER}/wasm`
     );
 
     const handOpts = (delegate) => ({
@@ -419,17 +426,25 @@ async function initializeModels() {
 
     try {
         handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("GPU"));
+        mediapipeHandDelegate = 'GPU';
     } catch (e) {
         console.warn("HandLandmarker GPU failed, using CPU:", e);
         handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("CPU"));
+        mediapipeHandDelegate = 'CPU';
     }
 
     try {
         poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts("GPU"));
+        mediapipePoseDelegate = 'GPU';
     } catch (e) {
         console.warn("PoseLandmarker GPU failed, using CPU:", e);
         poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts("CPU"));
+        mediapipePoseDelegate = 'CPU';
     }
+
+    console.info(
+        `[MediaPipe] hand: ${mediapipeHandDelegate}, pose: ${mediapipePoseDelegate} — если оба CPU, игра тяжелее; в DevTools отключите throttling.`
+    );
 
     loadingElement.classList.remove('visible');
     showMainMenu();
@@ -937,6 +952,10 @@ let handKeyLastSeenMs = new Map();
 /** Smoothed screen-space velocity per tip for short dropout extrapolation */
 let tipVelocityByKey = new Map();
 
+/** Поза нужна для маски; реже inference — заметно разгружает относительно «руки каждый кадр» */
+const POSE_INFER_EVERY_N_VIDEO_FRAMES = 2;
+let poseVideoFrameTick = 0;
+
 function gameLoop(nowTime) {
     if (!isPlaying) return;
 
@@ -953,9 +972,13 @@ function gameLoop(nowTime) {
     if (lastVideoTime !== video.currentTime) {
         lastVideoTime = video.currentTime;
         let hRes = handLandmarker.detectForVideo(video, startTimeMs);
-        let pRes = poseLandmarker.detectForVideo(video, startTimeMs);
         if (hRes) currentHandResults = hRes;
-        if (pRes) currentPoseResults = pRes;
+        poseVideoFrameTick += 1;
+        if (poseVideoFrameTick >= POSE_INFER_EVERY_N_VIDEO_FRAMES) {
+            poseVideoFrameTick = 0;
+            let pRes = poseLandmarker.detectForVideo(video, startTimeMs);
+            if (pRes) currentPoseResults = pRes;
+        }
     }
 
     // --- DRAWING ---
