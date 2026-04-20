@@ -24,6 +24,36 @@
             <h2 class="menu-heading">Выберите уровень</h2>
             <p class="menu-hint">Чем выше уровень, тем больше предметов одновременно на экране.</p>
             <div id="level-grid" class="level-grid"></div>
+            <div class="menu-options" role="group" aria-label="Опции">
+              <div class="menu-options-title">Опции</div>
+              <label class="menu-option-toggle">
+                <input type="checkbox" id="opt-sound-off" class="menu-option-input" aria-label="Отключить звуки в игре" />
+                <span class="menu-option-left">
+                  <span class="menu-option-emoji" aria-hidden="true">
+                    <span class="menu-option-emoji-on">🔊</span>
+                    <span class="menu-option-emoji-off">🔇</span>
+                  </span>
+                  <span class="menu-option-text">
+                    <span class="menu-option-title">Звуки в игре</span>
+                  </span>
+                </span>
+                <span class="menu-option-switch" aria-hidden="true"><span class="menu-option-knob"></span></span>
+              </label>
+              <label class="menu-option-toggle">
+                <input type="checkbox" id="opt-music-off" class="menu-option-input" aria-label="Отключить музыку" />
+                <span class="menu-option-left">
+                  <span class="menu-option-emoji" aria-hidden="true">
+                    <span class="menu-option-emoji-on">🎵</span>
+                    <span class="menu-option-emoji-off">🔇</span>
+                  </span>
+                  <span class="menu-option-text">
+                    <span class="menu-option-title">Музыка</span>
+                    <span class="menu-option-desc">Меню и игра</span>
+                  </span>
+                </span>
+                <span class="menu-option-switch" aria-hidden="true"><span class="menu-option-knob"></span></span>
+              </label>
+            </div>
           </div>
         </div>
         <div id="loading" class="visible">

@@ -1,5 +1,22 @@
 import { FilesetResolver, HandLandmarker, PoseLandmarker } from '@mediapipe/tasks-vision';
 
+const STORAGE_SFX_OFF = 'neon-ninja-sfx-off';
+const STORAGE_MUSIC_OFF = 'neon-ninja-music-off';
+
+/** Звуки резов / металлических ударов по роботу */
+let soundEffectsEnabled = true;
+/** Фоновая музыка в меню и в игре */
+let musicEnabled = true;
+
+function loadPersistedAudioSettings() {
+    soundEffectsEnabled = localStorage.getItem(STORAGE_SFX_OFF) !== '1';
+    musicEnabled = localStorage.getItem(STORAGE_MUSIC_OFF) !== '1';
+    const sfxCb = document.getElementById('opt-sound-off');
+    const musicCb = document.getElementById('opt-music-off');
+    if (sfxCb) sfxCb.checked = !soundEffectsEnabled;
+    if (musicCb) musicCb.checked = !musicEnabled;
+}
+
 /** URL звука разреза на каждый эмодзи (6 файлов на 9 типов — часть клипов переиспользуется). */
 const sliceSoundUrlByEmoji = {
     '🍌': new URL('./src/assets/sounds/Sound Of Fruit Slice.mp3', import.meta.url).href,
@@ -15,6 +32,7 @@ const sliceSoundUrlByEmoji = {
 };
 
 function playSliceSound(emoji) {
+    if (!soundEffectsEnabled) return;
     const src = sliceSoundUrlByEmoji[emoji];
     if (!src) return;
     const a = new Audio(src);
@@ -23,6 +41,7 @@ function playSliceSound(emoji) {
 }
 
 function playRobotMetalHit(which) {
+    if (!soundEffectsEnabled) return;
     const src =
         which === 1
             ? new URL('./src/assets/sounds/Sound Of Metal Box Hit1.mp3', import.meta.url).href
@@ -30,6 +49,87 @@ function playRobotMetalHit(which) {
     const a = new Audio(src);
     a.volume = 0.9;
     void a.play().catch(() => {});
+}
+
+const MENU_MUSIC_URL = new URL('./src/assets/sounds/menu.mp3', import.meta.url).href;
+/** Фоновые треки в игре — все .mp3 из src/assets/sounds/OST */
+const GAME_BG_TRACKS = Object.values(
+    import.meta.glob('./src/assets/sounds/OST/*.mp3', { eager: true, query: '?url', import: 'default' })
+);
+
+let menuMusicAudio = null;
+let gameMusicAudio = null;
+let gameMusicOnEnded = null;
+/** Перемешанный порядок OST на сессию игры */
+let gameMusicPlaylist = [];
+let gameMusicPlaylistIndex = 0;
+
+function shuffleArrayInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+}
+
+function getMenuMusicAudio() {
+    if (!menuMusicAudio) {
+        menuMusicAudio = new Audio(MENU_MUSIC_URL);
+        menuMusicAudio.loop = true;
+        menuMusicAudio.volume = 0.52;
+    }
+    return menuMusicAudio;
+}
+
+function playMenuMusic() {
+    if (!musicEnabled) return;
+    void getMenuMusicAudio().play().catch(() => {});
+}
+
+function pauseMenuMusic() {
+    if (menuMusicAudio) {
+        menuMusicAudio.pause();
+        menuMusicAudio.currentTime = 0;
+    }
+}
+
+function stopGameMusic() {
+    if (gameMusicAudio && gameMusicOnEnded) {
+        gameMusicAudio.removeEventListener('ended', gameMusicOnEnded);
+    }
+    if (gameMusicAudio) {
+        gameMusicAudio.pause();
+        gameMusicAudio = null;
+    }
+    gameMusicOnEnded = null;
+}
+
+function playGameMusicTrackAt(index) {
+    if (!musicEnabled) {
+        stopGameMusic();
+        return;
+    }
+    stopGameMusic();
+    if (!gameMusicPlaylist.length) return;
+    gameMusicPlaylistIndex = ((index % gameMusicPlaylist.length) + gameMusicPlaylist.length) % gameMusicPlaylist.length;
+    const url = gameMusicPlaylist[gameMusicPlaylistIndex];
+    const a = new Audio(url);
+    a.volume = 0.46;
+    gameMusicOnEnded = () => {
+        gameMusicPlaylistIndex = (gameMusicPlaylistIndex + 1) % gameMusicPlaylist.length;
+        playGameMusicTrackAt(gameMusicPlaylistIndex);
+    };
+    a.addEventListener('ended', gameMusicOnEnded);
+    gameMusicAudio = a;
+    void a.play().catch(() => {});
+}
+
+function startGameMusicPlaylist() {
+    pauseMenuMusic();
+    if (!musicEnabled || !GAME_BG_TRACKS.length) return;
+    gameMusicPlaylist = [...GAME_BG_TRACKS];
+    shuffleArrayInPlace(gameMusicPlaylist);
+    gameMusicPlaylistIndex = 0;
+    playGameMusicTrackAt(0);
 }
 
 const video = document.getElementById('webcam');
@@ -51,15 +151,17 @@ let fruits = [];
 let particles = [];
 let isPlaying = false;
 
-/** maxConcurrent = unsliced fruits cap; spawnIntervalMs = try spawn at most this often */
+/** maxConcurrent = unsliced fruits cap; spawnIntervalMs = try spawn at most this often; onlyRobots = тестовый режим */
 const LEVELS = [
     { maxConcurrent: 1, spawnIntervalMs: 2200 },
     { maxConcurrent: 2, spawnIntervalMs: 1900 },
     { maxConcurrent: 3, spawnIntervalMs: 1550 },
     { maxConcurrent: 4, spawnIntervalMs: 1250 },
     { maxConcurrent: 5, spawnIntervalMs: 1050 },
-    { maxConcurrent: 6, spawnIntervalMs: 950 }
+    { maxConcurrent: 4, spawnIntervalMs: 1000, onlyRobots: true }
 ];
+/** Кадров подряд без пересечения с предметом, чтобы снова считать «новый вход» (трекинг мерцает на границе круга) */
+const CONTACT_EXIT_DEBOUNCE_FRAMES = 7;
 /** Штраф за предмет, улетевший вниз несрезанным (симметрично +10 за рез) */
 const MISS_PENALTY = 10;
 let currentLevelIndex = 0;
@@ -79,6 +181,7 @@ function pluralObjectsRu(n) {
 
 function showMainMenu() {
     isPlaying = false;
+    stopGameMusic();
     mainMenu.classList.remove('is-hidden');
     hudGame.classList.add('is-hidden');
     fruits.length = 0;
@@ -87,6 +190,7 @@ function showMainMenu() {
     handKeyLastSeenMs.clear();
     tipVelocityByKey.clear();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    playMenuMusic();
 }
 
 function startLevel(levelIndex) {
@@ -94,7 +198,9 @@ function startLevel(levelIndex) {
     const cfg = getCurrentLevelConfig();
     score = 0;
     scoreDisplay.innerText = `Score: ${score}`;
-    levelDisplay.textContent = `Уровень ${currentLevelIndex + 1} · одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
+    levelDisplay.textContent = cfg.onlyRobots
+        ? `Уровень ${currentLevelIndex + 1} · тест · только роботы`
+        : `Уровень ${currentLevelIndex + 1} · одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
     fruits.length = 0;
     particles.length = 0;
     lastSpawnTime = Date.now();
@@ -102,6 +208,7 @@ function startLevel(levelIndex) {
     mainMenu.classList.add('is-hidden');
     hudGame.classList.remove('is-hidden');
     isPlaying = true;
+    startGameMusicPlaylist();
     requestAnimationFrame(gameLoop);
 }
 
@@ -109,12 +216,49 @@ LEVELS.forEach((cfg, i) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'level-btn';
-    btn.innerHTML = `<span class="level-title">Уровень ${i + 1}</span><span class="level-sub">одновременно ${pluralObjectsRu(cfg.maxConcurrent)}</span>`;
+    const sub = cfg.onlyRobots ? 'тест · только роботы' : `одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
+    btn.innerHTML = `<span class="level-title">Уровень ${i + 1}</span><span class="level-sub">${sub}</span>`;
     btn.addEventListener('click', () => startLevel(i));
     levelGrid.appendChild(btn);
 });
 
 btnBackMenu.addEventListener('click', () => showMainMenu());
+
+/** Автозапуск после загрузки часто блокируется — тап по панели (не по кнопке уровня) включает меню */
+mainMenu.addEventListener(
+    'pointerdown',
+    (e) => {
+        if (isPlaying) return;
+        if (e.target?.closest?.('.level-btn')) return;
+        if (e.target?.closest?.('.menu-options')) return;
+        playMenuMusic();
+    },
+    { capture: true }
+);
+
+const optSoundOff = document.getElementById('opt-sound-off');
+const optMusicOff = document.getElementById('opt-music-off');
+if (optSoundOff) {
+    optSoundOff.addEventListener('change', () => {
+        soundEffectsEnabled = !optSoundOff.checked;
+        if (soundEffectsEnabled) localStorage.removeItem(STORAGE_SFX_OFF);
+        else localStorage.setItem(STORAGE_SFX_OFF, '1');
+    });
+}
+if (optMusicOff) {
+    optMusicOff.addEventListener('change', () => {
+        musicEnabled = !optMusicOff.checked;
+        if (musicEnabled) {
+            localStorage.removeItem(STORAGE_MUSIC_OFF);
+            if (!isPlaying) playMenuMusic();
+        } else {
+            localStorage.setItem(STORAGE_MUSIC_OFF, '1');
+            pauseMenuMusic();
+            stopGameMusic();
+        }
+    });
+}
+loadPersistedAudioSettings();
 
 // Geometry configuration
 const HAND_CONNECTIONS = HandLandmarker.HAND_CONNECTIONS;
@@ -278,7 +422,10 @@ class Fruit {
             { emoji: '🍆', color: '#9c27b0' }, // Eggplant purple
             { emoji: '🤖', color: '#90caf9' } // Robot (металл / неон)
         ];
-        const type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
+        const levelCfg = getCurrentLevelConfig();
+        const type = levelCfg.onlyRobots
+            ? fruitTypes.find((t) => t.emoji === '🤖')
+            : fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
         this.emoji = type.emoji;
         this.color = type.color;
         if (this.emoji === '🤖') {
@@ -292,6 +439,8 @@ class Fruit {
         this.hitFlash = 0;
         /** Путь «вошёл в предмет» vs «ещё внутри» — один рез на один проход руки */
         this._wasTouchingHand = false;
+        /** Сколько кадров подряд нет пересечения (сброс _wasTouchingHand только после дебаунса) */
+        this._noContactFrames = 0;
 
         this.rotation = Math.random() * Math.PI * 2;
         this.rotationSpeed = (Math.random() - 0.5) * 0.1; // Random spin speed
@@ -317,7 +466,8 @@ class Fruit {
         if (!this.isSliced) {
             this.rotation += this.rotationSpeed * dt;
         } else {
-            this.sliceOffsetX += 6 * dt; // Separate halves physically
+            // Робот на 4 части: чуть сильнее обычного резa, без «ядреного» разлёта
+            this.sliceOffsetX += (this.isRobotQuad ? 12 : 6) * dt;
             this.rot1 += this.rotSpeed1 * dt;
             this.rot2 += this.rotSpeed2 * dt;
             if (this.isRobotQuad) {
@@ -346,7 +496,7 @@ class Fruit {
         } else if (this.isRobotQuad) {
             const hs = texSize / 2;
             const dw = drawSize / 2;
-            const spread = this.sliceOffsetX * 0.58;
+            const spread = this.sliceOffsetX * 0.82;
             const quads = [
                 { sx: 0, sy: 0, rot: this.rot1, ang: 0 },
                 { sx: hs, sy: 0, rot: this.rot2, ang: Math.PI / 2 },
@@ -434,6 +584,73 @@ class SliceBurst {
         ctx.beginPath();
         ctx.arc(0, 0, 8 + u * 40, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
+    }
+}
+
+/** Визуальный взрыв при уничтожении робота: вспышка, расходящиеся кольца, крест */
+class RobotExplosionFx {
+    constructor(x, y, radius) {
+        this.x = x;
+        this.y = y;
+        this.radius = Math.max(40, radius);
+        this.life = 1;
+        this.rot = Math.random() * Math.PI * 2;
+    }
+    update(dt = 1) {
+        this.life -= 0.052 * dt;
+    }
+    draw(ctx) {
+        const t = Math.max(0, this.life);
+        if (t <= 0) return;
+        const u = 1 - t;
+        const maxR = this.radius;
+
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.globalCompositeOperation = 'lighter';
+
+        const coreR = maxR * (0.35 + u * 2.1);
+        ctx.globalAlpha = t * t * 0.75;
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
+        g.addColorStop(0, 'rgba(255,255,255,0.95)');
+        g.addColorStop(0.28, 'rgba(0,243,255,0.5)');
+        g.addColorStop(0.65, 'rgba(255,0,234,0.22)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, coreR, 0, Math.PI * 2);
+        ctx.fill();
+
+        for (let k = 0; k < 3; k++) {
+            const phase = Math.min(1, u * 1.4 - k * 0.16);
+            if (phase <= 0) continue;
+            const rad = maxR * (0.55 + phase * 3.8);
+            const a = (1 - phase) * 0.55 * t;
+            ctx.globalAlpha = a;
+            ctx.strokeStyle = k % 2 === 0 ? '#00f3ff' : '#ff00ea';
+            ctx.lineWidth = 2.2 + (1 - phase) * 4.5;
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = ctx.strokeStyle;
+            ctx.beginPath();
+            ctx.arc(0, 0, rad, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        ctx.rotate(this.rot + u * 1.1);
+        ctx.globalAlpha = t * 0.45 * (1 - u * 0.75);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 14;
+        ctx.shadowColor = '#00f3ff';
+        const L = maxR * (1.15 + u * 2.8);
+        ctx.beginPath();
+        ctx.moveTo(-L, 0);
+        ctx.lineTo(L, 0);
+        ctx.moveTo(0, -L);
+        ctx.lineTo(0, L);
+        ctx.stroke();
+
         ctx.restore();
     }
 }
@@ -1016,8 +1233,18 @@ function gameLoop(nowTime) {
                     break;
                 }
             }
+            if (pathIntersectsFruit) {
+                fruit._noContactFrames = 0;
+            } else {
+                fruit._noContactFrames += 1;
+                if (fruit._noContactFrames >= CONTACT_EXIT_DEBOUNCE_FRAMES) {
+                    fruit._wasTouchingHand = false;
+                }
+            }
             const cutStroke = pathIntersectsFruit && !fruit._wasTouchingHand;
-            fruit._wasTouchingHand = pathIntersectsFruit;
+            if (pathIntersectsFruit) {
+                fruit._wasTouchingHand = true;
+            }
 
             if (cutStroke) {
                 if (fruit.emoji === '🤖') {
@@ -1032,24 +1259,30 @@ function gameLoop(nowTime) {
                         fruit.isSliced = true;
                         fruit.isRobotQuad = true;
                         fruit.cutAngle = fruit.rotation;
-                        fruit.rot1 = fruit.rotation + (Math.random() - 0.5) * 0.25;
-                        fruit.rot2 = fruit.rotation + (Math.random() - 0.5) * 0.25;
-                        fruit.rot3 = fruit.rotation + (Math.random() - 0.5) * 0.25;
-                        fruit.rot4 = fruit.rotation + (Math.random() - 0.5) * 0.25;
-                        fruit.rotSpeed1 = fruit.rotationSpeed - 0.08;
-                        fruit.rotSpeed2 = fruit.rotationSpeed + 0.07;
-                        fruit.rotSpeed3 = fruit.rotationSpeed - 0.04;
-                        fruit.rotSpeed4 = fruit.rotationSpeed + 0.09;
+                        fruit.rot1 = fruit.rotation + (Math.random() - 0.5) * 0.45;
+                        fruit.rot2 = fruit.rotation + (Math.random() - 0.5) * 0.45;
+                        fruit.rot3 = fruit.rotation + (Math.random() - 0.5) * 0.45;
+                        fruit.rot4 = fruit.rotation + (Math.random() - 0.5) * 0.45;
+                        const rs = fruit.rotationSpeed;
+                        const wobble = () => (Math.random() - 0.5) * 0.22;
+                        fruit.rotSpeed1 = rs * 2.2 + wobble();
+                        fruit.rotSpeed2 = rs * -2.0 + wobble();
+                        fruit.rotSpeed3 = rs * 1.85 + wobble();
+                        fruit.rotSpeed4 = rs * -2.05 + wobble();
+                        const blast = Math.min(72, gameLayout.minSide * 0.055);
+                        fruit.vy -= blast * 0.72;
+                        fruit.vx += (Math.random() - 0.5) * blast * 0.42;
 
                         score += 10;
                         scoreDisplay.innerText = `Score: ${score}`;
                         playSliceSound(fruit.emoji);
 
                         particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
-                        for (let p = 0; p < 26; p++) {
+                        particles.push(new RobotExplosionFx(fruit.x, fruit.y, fruit.radius));
+                        for (let p = 0; p < 34; p++) {
                             particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'dot'));
                         }
-                        for (let p = 0; p < 16; p++) {
+                        for (let p = 0; p < 28; p++) {
                             particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
                         }
                     }
