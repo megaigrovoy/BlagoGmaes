@@ -84,29 +84,62 @@ function getMediapipeWasmUrl() {
     return new URL('mediapipe-wasm', window.location.origin + base).href;
 }
 
-/** iOS/iPad: без play() в ответ на жест Safari глушит HTMLAudio из rAF. Только void — не await (Promise на data: WAV на iPad может не завершаться). */
+/**
+ * iOS / iPad Chrome (WebKit): нужен реальный play() по жесту; data:-WAV часто молчит.
+ * Цепочка mp3 с того же origin + сброс AudioContext.
+ */
 let htmlAudioUnlocked = false;
-function tryUnlockAudioOnUserGesture() {
-    if (htmlAudioUnlocked) return;
-    const silentWav =
-        'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+let audioUnlockBusy = false;
+
+function resumeSharedAudioContext() {
     try {
-        const a = new Audio(silentWav);
-        a.volume = 0.001;
-        const p = a.play();
-        if (p === undefined) {
-            htmlAudioUnlocked = true;
-            return;
-        }
-        void p
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!window.__ninjaAudioCtx) window.__ninjaAudioCtx = new AC();
+        const ctx = window.__ninjaAudioCtx;
+        if (ctx.state === 'suspended') void ctx.resume();
+    } catch (_) {}
+}
+
+function tryUnlockAudioOnUserGesture() {
+    if (htmlAudioUnlocked || audioUnlockBusy) return;
+    audioUnlockBusy = true;
+    resumeSharedAudioContext();
+
+    const srcs = [sliceSoundUrlByEmoji['🍌'], sliceSoundUrlByEmoji['🍎'], MENU_MUSIC_URL];
+
+    const playSrcAt = (i) => {
+        if (i >= srcs.length) return Promise.reject(new Error('no unlock src'));
+        const a = new Audio();
+        a.preload = 'auto';
+        a.src = srcs[i];
+        a.volume = 0.04;
+        try {
+            a.load();
+        } catch (_) {}
+        return a
+            .play()
             .then(() => {
-                htmlAudioUnlocked = true;
-                a.pause();
+                try {
+                    a.pause();
+                    a.src = '';
+                } catch (_) {}
             })
-            .catch(() => {});
-    } catch (_) {
-        htmlAudioUnlocked = true;
-    }
+            .catch(() => playSrcAt(i + 1));
+    };
+
+    const busyTimer = setTimeout(() => {
+        audioUnlockBusy = false;
+    }, 3000);
+    void playSrcAt(0)
+        .then(() => {
+            htmlAudioUnlocked = true;
+        })
+        .catch(() => {})
+        .finally(() => {
+            clearTimeout(busyTimer);
+            audioUnlockBusy = false;
+        });
 }
 
 let menuMusicAudio = null;
@@ -267,8 +300,11 @@ function startLevel(levelIndex) {
     canvasElement.style.visibility = "";
     isPlaying = true;
     void video.play().catch(() => {});
-    startGameMusicPlaylist();
-    requestAnimationFrame(gameLoop);
+    /** Музыка и первый кадр — в microtask после unlock play(), иначе iOS Chrome иногда глушит первый HTMLAudio */
+    queueMicrotask(() => {
+        startGameMusicPlaylist();
+        requestAnimationFrame(gameLoop);
+    });
 }
 
 LEVELS.forEach((cfg, i) => {
@@ -296,9 +332,16 @@ mainMenu.addEventListener(
     { capture: true }
 );
 
-/** iPad: touchstart раньше click — иначе тап только по уровню не открывал аудио-ворота */
+/** iPad / iOS Chrome: touchstart + touchend — часть сборок открывает аудио только на одном из них */
 mainMenu.addEventListener(
     'touchstart',
+    () => {
+        if (!isPlaying) tryUnlockAudioOnUserGesture();
+    },
+    { capture: true, passive: true }
+);
+mainMenu.addEventListener(
+    'touchend',
     () => {
         if (!isPlaying) tryUnlockAudioOnUserGesture();
     },
