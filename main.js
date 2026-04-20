@@ -34,24 +34,17 @@ const sliceSoundUrlByEmoji = {
     '🤖': new URL('./src/assets/sounds/Sound Of Fruit Slice 4.mp3', import.meta.url).href
 };
 
+const METAL_HIT_URL_1 = new URL('./src/assets/sounds/Sound Of Metal Box Hit1.mp3', import.meta.url).href;
+const METAL_HIT_URL_2 = new URL('./src/assets/sounds/Sound Of Metal Box Hit2.mp3', import.meta.url).href;
+
 function playSliceSound(emoji) {
     if (!soundEffectsEnabled) return;
-    const src = sliceSoundUrlByEmoji[emoji];
-    if (!src) return;
-    const a = new Audio(src);
-    a.volume = 0.88;
-    void a.play().catch(() => {});
+    playOneShotSfx(sliceSoundUrlByEmoji[emoji], 0.88);
 }
 
 function playRobotMetalHit(which) {
     if (!soundEffectsEnabled) return;
-    const src =
-        which === 1
-            ? new URL('./src/assets/sounds/Sound Of Metal Box Hit1.mp3', import.meta.url).href
-            : new URL('./src/assets/sounds/Sound Of Metal Box Hit2.mp3', import.meta.url).href;
-    const a = new Audio(src);
-    a.volume = 0.9;
-    void a.play().catch(() => {});
+    playOneShotSfx(which === 1 ? METAL_HIT_URL_1 : METAL_HIT_URL_2, 0.9);
 }
 
 const MENU_MUSIC_URL = new URL('./src/assets/sounds/menu.mp3', import.meta.url).href;
@@ -60,12 +53,94 @@ const GAME_BG_TRACKS = Object.values(
     import.meta.glob('./src/assets/sounds/OST/*.mp3', { eager: true, query: '?url', import: 'default' })
 );
 
+/** Декодированные буферы для SFX: на iPad/WebKit второй HTMLAudio часто молчит, пока играет музыка */
+const sfxAudioBufferByUrl = new Map();
+const sfxAudioBufferPromiseByUrl = new Map();
+
+function getOrCreateSfxContext() {
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        if (!window.__ninjaAudioCtx) window.__ninjaAudioCtx = new AC();
+        return window.__ninjaAudioCtx;
+    } catch (_) {
+        return null;
+    }
+}
+
+function ensureSfxAudioBuffer(ctx, url) {
+    if (!url || !ctx) return Promise.reject(new Error('no ctx/url'));
+    const hit = sfxAudioBufferByUrl.get(url);
+    if (hit) return Promise.resolve(hit);
+    const inflight = sfxAudioBufferPromiseByUrl.get(url);
+    if (inflight) return inflight;
+    const p = fetch(url)
+        .then((r) => r.arrayBuffer())
+        .then((ab) => ctx.decodeAudioData(ab))
+        .then((buf) => {
+            sfxAudioBufferByUrl.set(url, buf);
+            sfxAudioBufferPromiseByUrl.delete(url);
+            return buf;
+        })
+        .catch((e) => {
+            sfxAudioBufferPromiseByUrl.delete(url);
+            throw e;
+        });
+    sfxAudioBufferPromiseByUrl.set(url, p);
+    return p;
+}
+
+function playDecodedSfx(ctx, buffer, volume) {
+    if (ctx.state === 'suspended') void ctx.resume();
+    const src = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    gain.gain.value = volume;
+    src.buffer = buffer;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(0);
+}
+
+function playOneShotSfx(url, volume) {
+    if (!soundEffectsEnabled || !url) return;
+    const ctx = window.__ninjaAudioCtx || getOrCreateSfxContext();
+    const ready = ctx && sfxAudioBufferByUrl.get(url);
+    if (ctx && ready) {
+        try {
+            playDecodedSfx(ctx, ready, volume);
+        } catch (_) {
+            fallbackHtmlOneShot(url, volume);
+        }
+        return;
+    }
+    if (ctx) {
+        void ensureSfxAudioBuffer(ctx, url)
+            .then((buf) => {
+                if (!soundEffectsEnabled) return;
+                try {
+                    playDecodedSfx(ctx, buf, volume);
+                } catch (_) {
+                    fallbackHtmlOneShot(url, volume);
+                }
+            })
+            .catch(() => fallbackHtmlOneShot(url, volume));
+        return;
+    }
+    fallbackHtmlOneShot(url, volume);
+}
+
+function fallbackHtmlOneShot(url, volume) {
+    const a = new Audio(url);
+    a.volume = volume;
+    void a.play().catch(() => {});
+}
+
 /** Ранняя загрузка/декод mp3 — иначе первый рез на проде ждёт сеть/декодер */
 function preloadGameAudio() {
     const urls = new Set([
         ...Object.values(sliceSoundUrlByEmoji),
-        new URL('./src/assets/sounds/Sound Of Metal Box Hit1.mp3', import.meta.url).href,
-        new URL('./src/assets/sounds/Sound Of Metal Box Hit2.mp3', import.meta.url).href,
+        METAL_HIT_URL_1,
+        METAL_HIT_URL_2,
         MENU_MUSIC_URL,
         ...GAME_BG_TRACKS
     ]);
@@ -75,6 +150,14 @@ function preloadGameAudio() {
         a.preload = 'auto';
         a.src = u;
         void a.load();
+    }
+    const ctx = getOrCreateSfxContext();
+    if (ctx) {
+        const sfxOnly = new Set([...Object.values(sliceSoundUrlByEmoji), METAL_HIT_URL_1, METAL_HIT_URL_2]);
+        for (const u of sfxOnly) {
+            if (!u) continue;
+            void ensureSfxAudioBuffer(ctx, u).catch(() => {});
+        }
     }
 }
 
@@ -92,13 +175,8 @@ let htmlAudioUnlocked = false;
 let audioUnlockBusy = false;
 
 function resumeSharedAudioContext() {
-    try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        if (!window.__ninjaAudioCtx) window.__ninjaAudioCtx = new AC();
-        const ctx = window.__ninjaAudioCtx;
-        if (ctx.state === 'suspended') void ctx.resume();
-    } catch (_) {}
+    const ctx = getOrCreateSfxContext();
+    if (ctx && ctx.state === 'suspended') void ctx.resume();
 }
 
 function tryUnlockAudioOnUserGesture() {
