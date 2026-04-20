@@ -193,6 +193,8 @@ function showMainMenu() {
     handKeyLastSeenMs.clear();
     tipVelocityByKey.clear();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    /** Полноэкранный canvas под меню всё равно участвует в композитинге — убираем из дерева отрисовки */
+    canvasElement.style.visibility = "hidden";
     /** В меню кадр камеры не нужен — меньше декодер/GPU, плавнее CSS */
     void video.pause();
     playMenuMusic();
@@ -212,6 +214,7 @@ function startLevel(levelIndex) {
     lastFrameTime = performance.now();
     mainMenu.classList.add('is-hidden');
     hudGame.classList.remove('is-hidden');
+    canvasElement.style.visibility = "";
     isPlaying = true;
     void video.play().catch(() => {});
     startGameMusicPlaylist();

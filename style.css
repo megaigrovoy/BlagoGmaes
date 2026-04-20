@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&display=swap');
-
 :root {
   --neon-cyan: #00f3ff;
   --neon-magenta: #ff00ea;
@@ -129,9 +127,8 @@ canvas {
   padding: 1.5rem;
   z-index: 5;
   pointer-events: auto;
-  /* Без тяжёлого blur — иначе микролаги при hover/скролле на части GPU */
-  background: rgba(8, 8, 12, 0.9);
-  backdrop-filter: blur(4px);
+  /* Полностью без backdrop-filter — на Windows+Chrome размытие часто даёт рывки при hover соседей */
+  background: rgba(8, 8, 12, 0.94);
 }
 
 .menu-overlay.is-hidden {
@@ -147,7 +144,7 @@ canvas {
   background: rgba(18, 18, 24, 0.92);
   box-shadow: 0 0 40px rgba(0, 243, 255, 0.15), 0 0 60px rgba(255, 0, 234, 0.08);
   text-align: center;
-  contain: layout style;
+  transform: translateZ(0);
 }
 
 .menu-hero-img {
@@ -157,7 +154,9 @@ canvas {
   max-height: min(380px, 44vh);
   margin: 0 auto 1.1rem;
   object-fit: contain;
-  filter: drop-shadow(0 0 16px rgba(255, 0, 234, 0.5)) drop-shadow(0 0 24px rgba(0, 243, 255, 0.3));
+  border-radius: 12px;
+  /* Двойной drop-shadow на webp заставляет Chrome перефильтровывать картинку при hover соседей — очень дорого */
+  box-shadow: 0 0 20px rgba(0, 243, 255, 0.22), 0 0 36px rgba(255, 0, 234, 0.12);
 }
 
 .menu-heading {
@@ -365,6 +364,7 @@ canvas {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 0.75rem;
+  isolation: isolate;
 }
 
 .level-btn {
@@ -379,11 +379,13 @@ canvas {
   background: rgba(255, 255, 255, 0.05);
   color: #fff;
   cursor: pointer;
-  transition: transform 0.15s, border-color 0.2s, box-shadow 0.2s, background 0.2s;
+  /* Только композитные свойства — без анимации background (полная перерисовка кнопки) */
+  transition: transform 0.12s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.12s ease, box-shadow 0.12s ease;
+  will-change: transform;
 }
 
 .level-btn:hover {
-  transform: translateY(-2px);
+  transform: translateY(-2px) translateZ(0);
   border-color: var(--neon-magenta);
   box-shadow: 0 0 18px rgba(255, 0, 234, 0.35);
   background: rgba(255, 0, 234, 0.08);
@@ -406,8 +408,8 @@ canvas {
   left: 50%;
   z-index: 10;
   transform: translate(-50%, -50%);
-  background: rgba(15, 15, 19, 0.9);
-  backdrop-filter: blur(15px);
+  background: rgba(15, 15, 19, 0.94);
+  backdrop-filter: blur(6px);
   padding: 2.5rem;
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.1);
