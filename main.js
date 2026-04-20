@@ -84,13 +84,10 @@ function getMediapipeWasmUrl() {
     return new URL('mediapipe-wasm', window.location.origin + base).href;
 }
 
-/**
- * iOS/iPad: без успешного play() в цепочке жеста Safari глушит HTMLAudio из rAF (резы/музыка «без звука»).
- * Возвращает Promise — в startLevel нужен await, иначе гонка с первым play игры.
- */
+/** iOS/iPad: без play() в ответ на жест Safari глушит HTMLAudio из rAF. Только void — не await (Promise на data: WAV на iPad может не завершаться). */
 let htmlAudioUnlocked = false;
-function tryUnlockAudioOnUserGestureAsync() {
-    if (htmlAudioUnlocked) return Promise.resolve();
+function tryUnlockAudioOnUserGesture() {
+    if (htmlAudioUnlocked) return;
     const silentWav =
         'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
     try {
@@ -99,16 +96,16 @@ function tryUnlockAudioOnUserGestureAsync() {
         const p = a.play();
         if (p === undefined) {
             htmlAudioUnlocked = true;
-            return Promise.resolve();
+            return;
         }
-        return p
+        void p
             .then(() => {
                 htmlAudioUnlocked = true;
                 a.pause();
             })
             .catch(() => {});
     } catch (_) {
-        return Promise.resolve();
+        htmlAudioUnlocked = true;
     }
 }
 
@@ -252,8 +249,8 @@ function showMainMenu() {
     playMenuMusic();
 }
 
-async function startLevel(levelIndex) {
-    await tryUnlockAudioOnUserGestureAsync();
+function startLevel(levelIndex) {
+    tryUnlockAudioOnUserGesture();
     currentLevelIndex = Math.max(0, Math.min(LEVELS.length - 1, levelIndex));
     const cfg = getCurrentLevelConfig();
     score = 0;
@@ -280,7 +277,7 @@ LEVELS.forEach((cfg, i) => {
     btn.className = 'level-btn';
     const sub = cfg.onlyRobots ? 'тест · только роботы' : `одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
     btn.innerHTML = `<span class="level-title">Уровень ${i + 1}</span><span class="level-sub">${sub}</span>`;
-    btn.addEventListener('click', () => void startLevel(i));
+    btn.addEventListener('click', () => startLevel(i));
     levelGrid.appendChild(btn);
 });
 
@@ -291,7 +288,7 @@ mainMenu.addEventListener(
     'pointerdown',
     (e) => {
         if (isPlaying) return;
-        void tryUnlockAudioOnUserGestureAsync();
+        tryUnlockAudioOnUserGesture();
         if (e.target?.closest?.('.level-btn')) return;
         if (e.target?.closest?.('.menu-options')) return;
         playMenuMusic();
@@ -303,7 +300,7 @@ mainMenu.addEventListener(
 mainMenu.addEventListener(
     'touchstart',
     () => {
-        if (!isPlaying) void tryUnlockAudioOnUserGestureAsync();
+        if (!isPlaying) tryUnlockAudioOnUserGesture();
     },
     { capture: true, passive: true }
 );
