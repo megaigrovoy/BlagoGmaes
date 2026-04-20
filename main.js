@@ -322,6 +322,7 @@ async function setupWebcam() {
         const navigator = window.navigator;
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             reject(new Error("Webcam not supported."));
+            return;
         }
         navigator.mediaDevices.getUserMedia({
             video: {
@@ -350,10 +351,11 @@ async function initializeModels() {
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
     );
 
-    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    const handOpts = (delegate) => ({
         baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-            delegate: "GPU"
+            modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+            delegate
         },
         runningMode: "VIDEO",
         numHands: 2,
@@ -362,13 +364,28 @@ async function initializeModels() {
         minTrackingConfidence: 0.35
     });
 
-    poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+    const poseOpts = (delegate) => ({
         baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
-            delegate: "GPU"
+            modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+            delegate
         },
-        runningMode: "VIDEO",
+        runningMode: "VIDEO"
     });
+
+    try {
+        handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("GPU"));
+    } catch (e) {
+        console.warn("HandLandmarker GPU failed, using CPU:", e);
+        handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("CPU"));
+    }
+
+    try {
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts("GPU"));
+    } catch (e) {
+        console.warn("PoseLandmarker GPU failed, using CPU:", e);
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts("CPU"));
+    }
 
     loadingElement.classList.remove('visible');
     showMainMenu();
@@ -1330,14 +1347,49 @@ function gameLoop(nowTime) {
     if (isPlaying) requestAnimationFrame(gameLoop);
 }
 
+function showStartError(e) {
+    console.error(e);
+    const name = e?.name || "";
+    const msg = e?.message || String(e);
+    let hint =
+        "Откройте консоль браузера (F12 → Console) и при необходимости пришлите текст ошибки.";
+    if (name === "NotAllowedError" || /Permission/i.test(msg)) {
+        hint =
+            "Браузер заблокировал камеру для этого сайта. Нажмите на значок замка слева от адреса → разрешите камеру, обновите страницу.";
+    } else if (name === "NotFoundError" || /DevicesNotFound/i.test(msg)) {
+        hint = "Камера не найдена. Проверьте, что она подключена и не занята другим приложением.";
+    }
+    loadingElement.innerHTML = "";
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "max-width:28rem;margin:0 auto;text-align:left;line-height:1.45;font-size:0.95rem;";
+    const t = document.createElement("p");
+    t.textContent = "Не удалось запустить игру.";
+    t.style.fontWeight = "700";
+    t.style.marginBottom = "0.5rem";
+    wrap.appendChild(t);
+    const d = document.createElement("p");
+    d.style.opacity = "0.9";
+    d.style.fontSize = "0.85rem";
+    d.style.wordBreak = "break-word";
+    d.textContent = msg ? `${name ? `[${name}] ` : ""}${msg}` : hint;
+    wrap.appendChild(d);
+    const h = document.createElement("p");
+    h.style.marginTop = "0.75rem";
+    h.style.fontSize = "0.82rem";
+    h.style.opacity = "0.75";
+    h.textContent = hint;
+    wrap.appendChild(h);
+    loadingElement.appendChild(wrap);
+    loadingElement.classList.add("visible");
+}
+
 // Start sequence
 async function start() {
     try {
         await setupWebcam();
         await initializeModels();
     } catch (e) {
-        console.error(e);
-        loadingElement.innerHTML = "Error loading. Check camera permissions.";
+        showStartError(e);
     }
 }
 
