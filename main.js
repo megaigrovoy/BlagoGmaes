@@ -186,12 +186,17 @@ function warmSfxAudioBuffersYielding() {
 
 /** Ранняя загрузка/декод mp3 — иначе первый рез на проде ждёт сеть/декодер */
 function preloadGameAudio() {
-    const critical = [
-        ...new Set([...Object.values(sliceSoundUrlByEmoji), METAL_HIT_URL_1, METAL_HIT_URL_2, MENU_MUSIC_URL])
-    ].filter(Boolean);
-    for (const u of critical) preloadHtmlAudioUrl(u);
-    scheduleStaggeredOstPreload();
-    warmSfxAudioBuffersYielding();
+    if (soundEffectsEnabled) {
+        const sfxUrls = [
+            ...new Set([...Object.values(sliceSoundUrlByEmoji), METAL_HIT_URL_1, METAL_HIT_URL_2])
+        ].filter(Boolean);
+        for (const u of sfxUrls) preloadHtmlAudioUrl(u);
+        warmSfxAudioBuffersYielding();
+    }
+    if (musicEnabled) {
+        preloadHtmlAudioUrl(MENU_MUSIC_URL);
+        scheduleStaggeredOstPreload();
+    }
 }
 
 /** База WASM с того же origin, что и страница (npm run prepare:wasm → public/mediapipe-wasm) */
