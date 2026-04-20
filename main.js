@@ -649,14 +649,17 @@ let mediapipePoseDelegate = 'CPU';
 async function initializeModels() {
     let vision;
     const wasmLocal = getMediapipeWasmUrl();
+    let visionWasmSource = 'same-origin';
     try {
         vision = await FilesetResolver.forVisionTasks(wasmLocal);
     } catch (e) {
         console.warn('MediaPipe wasm с этого сайта не открылся, fallback CDN:', e);
+        visionWasmSource = 'jsdelivr-fallback';
         vision = await FilesetResolver.forVisionTasks(
             `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VISION_WASM_VER}/wasm`
         );
     }
+    console.info(`[NeonNinjaCat] MediaPipe WASM: ${visionWasmSource} ← ${wasmLocal}`);
 
     const handOpts = (delegate) => ({
         baseOptions: {
