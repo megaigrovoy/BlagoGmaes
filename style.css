@@ -112,7 +112,6 @@ canvas {
   background: rgba(15, 15, 19, 0.75);
   color: #fff;
   cursor: pointer;
-  backdrop-filter: blur(8px);
   transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
@@ -130,8 +129,9 @@ canvas {
   padding: 1.5rem;
   z-index: 5;
   pointer-events: auto;
-  background: rgba(8, 8, 12, 0.72);
-  backdrop-filter: blur(10px);
+  /* Без тяжёлого blur — иначе микролаги при hover/скролле на части GPU */
+  background: rgba(8, 8, 12, 0.9);
+  backdrop-filter: blur(4px);
 }
 
 .menu-overlay.is-hidden {
@@ -147,6 +147,7 @@ canvas {
   background: rgba(18, 18, 24, 0.92);
   box-shadow: 0 0 40px rgba(0, 243, 255, 0.15), 0 0 60px rgba(255, 0, 234, 0.08);
   text-align: center;
+  contain: layout style;
 }
 
 .menu-hero-img {

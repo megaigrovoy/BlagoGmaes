@@ -193,6 +193,8 @@ function showMainMenu() {
     handKeyLastSeenMs.clear();
     tipVelocityByKey.clear();
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    /** В меню кадр камеры не нужен — меньше декодер/GPU, плавнее CSS */
+    void video.pause();
     playMenuMusic();
 }
 
@@ -211,6 +213,7 @@ function startLevel(levelIndex) {
     mainMenu.classList.add('is-hidden');
     hudGame.classList.remove('is-hidden');
     isPlaying = true;
+    void video.play().catch(() => {});
     startGameMusicPlaylist();
     requestAnimationFrame(gameLoop);
 }
@@ -293,8 +296,15 @@ function readViewportSize() {
     return { w, h };
 }
 
+/** Последние применённые размеры — без лишнего сброса canvas */
+let lastResizeW = 0;
+let lastResizeH = 0;
+
 function resizeCanvas() {
     const { w, h } = readViewportSize();
+    if (w === lastResizeW && h === lastResizeH) return;
+    lastResizeW = w;
+    lastResizeH = h;
     gameLayout.w = w;
     gameLayout.h = h;
     gameLayout.minSide = Math.min(w, h);
@@ -315,9 +325,18 @@ function resizeCanvas() {
     document.body.style.width = `${w}px`;
 }
 
-window.addEventListener('resize', resizeCanvas);
-window.visualViewport?.addEventListener('resize', resizeCanvas);
-window.visualViewport?.addEventListener('scroll', resizeCanvas);
+/** Частые события visualViewport (адресная строка, зум) иначе десятки раз сбрасывают canvas */
+let resizeCanvasDebounce = 0;
+function scheduleResizeCanvas() {
+    clearTimeout(resizeCanvasDebounce);
+    resizeCanvasDebounce = setTimeout(() => {
+        resizeCanvasDebounce = 0;
+        resizeCanvas();
+    }, 110);
+}
+
+window.addEventListener('resize', scheduleResizeCanvas);
+window.visualViewport?.addEventListener('resize', scheduleResizeCanvas);
 resizeCanvas();
 
 function stopVideoTracks() {
