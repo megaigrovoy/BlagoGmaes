@@ -331,6 +331,13 @@ function resizeCanvas() {
 /** Частые события visualViewport (адресная строка, зум) иначе десятки раз сбрасывают canvas */
 let resizeCanvasDebounce = 0;
 function scheduleResizeCanvas() {
+    /** Во время игры отложенный ресайз ломает попадание координат → «пропадают» кисти */
+    if (isPlaying) {
+        clearTimeout(resizeCanvasDebounce);
+        resizeCanvasDebounce = 0;
+        resizeCanvas();
+        return;
+    }
     clearTimeout(resizeCanvasDebounce);
     resizeCanvasDebounce = setTimeout(() => {
         resizeCanvasDebounce = 0;
@@ -974,8 +981,8 @@ let handKeyLastSeenMs = new Map();
 /** Smoothed screen-space velocity per tip for short dropout extrapolation */
 let tipVelocityByKey = new Map();
 
-/** Поза нужна для маски; реже inference — заметно разгружает относительно «руки каждый кадр» */
-const POSE_INFER_EVERY_N_VIDEO_FRAMES = 2;
+/** Поза для маски реже рук — меньше нагрузка на главный поток при продакшен-сборке */
+const POSE_INFER_EVERY_N_VIDEO_FRAMES = 3;
 let poseVideoFrameTick = 0;
 
 function gameLoop(nowTime) {
@@ -993,13 +1000,23 @@ function gameLoop(nowTime) {
 
     if (lastVideoTime !== video.currentTime) {
         lastVideoTime = video.currentTime;
-        let hRes = handLandmarker.detectForVideo(video, startTimeMs);
-        if (hRes) currentHandResults = hRes;
+        /** Время кадра видео (мс) — стабильнее для VIDEO mode, чем performance.now() */
+        const frameTsMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : startTimeMs;
+        try {
+            const hRes = handLandmarker.detectForVideo(video, frameTsMs);
+            if (hRes) currentHandResults = hRes;
+        } catch (err) {
+            console.warn("HandLandmarker detectForVideo:", err);
+        }
         poseVideoFrameTick += 1;
         if (poseVideoFrameTick >= POSE_INFER_EVERY_N_VIDEO_FRAMES) {
             poseVideoFrameTick = 0;
-            let pRes = poseLandmarker.detectForVideo(video, startTimeMs);
-            if (pRes) currentPoseResults = pRes;
+            try {
+                const pRes = poseLandmarker.detectForVideo(video, frameTsMs);
+                if (pRes) currentPoseResults = pRes;
+            } catch (err) {
+                console.warn("PoseLandmarker detectForVideo:", err);
+            }
         }
     }
 
