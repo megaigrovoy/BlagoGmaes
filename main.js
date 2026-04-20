@@ -317,33 +317,77 @@ window.visualViewport?.addEventListener('resize', resizeCanvas);
 window.visualViewport?.addEventListener('scroll', resizeCanvas);
 resizeCanvas();
 
-async function setupWebcam() {
+function stopVideoTracks() {
+    const s = video.srcObject;
+    if (s && typeof s.getTracks === "function") {
+        s.getTracks().forEach((t) => t.stop());
+    }
+    video.srcObject = null;
+}
+
+/** Дождаться готовности video: размеры/кадр (иначе Chrome может дать Timeout starting video source). */
+function waitForVideoReady(el, timeoutMs = 20000) {
     return new Promise((resolve, reject) => {
-        const navigator = window.navigator;
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            reject(new Error("Webcam not supported."));
+        if (el.readyState >= 2 && el.videoWidth > 0) {
+            resolve();
             return;
         }
-        navigator.mediaDevices.getUserMedia({
-            video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                facingMode: "user"
-            }
-        }).then((stream) => {
-            video.srcObject = stream;
-            video.onloadedmetadata = () => {
-                video.play().then(() => {
-                    resolve();
-                }).catch(e => {
-                    console.error("Video play error:", e);
-                    reject(e);
-                });
-            };
-        }).catch((err) => {
-            reject(err);
-        });
+        let done = false;
+        const finish = (ok) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            el.removeEventListener("loadedmetadata", onMeta);
+            el.removeEventListener("loadeddata", onData);
+            el.removeEventListener("canplay", onPlay);
+            if (ok) resolve();
+            else reject(new Error("Video metadata timeout"));
+        };
+        const onMeta = () => {
+            if (el.videoWidth > 0) finish(true);
+        };
+        const onData = () => finish(true);
+        const onPlay = () => finish(true);
+        const timer = setTimeout(() => finish(false), timeoutMs);
+        el.addEventListener("loadedmetadata", onMeta);
+        el.addEventListener("loadeddata", onData);
+        el.addEventListener("canplay", onPlay);
     });
+}
+
+async function setupWebcam() {
+    const nav = window.navigator;
+    if (!nav.mediaDevices?.getUserMedia) {
+        throw new Error("Webcam not supported.");
+    }
+
+    video.muted = true;
+    video.setAttribute("playsinline", "");
+    video.setAttribute("autoplay", "");
+
+    const constraintSets = [
+        { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } },
+        { video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" } },
+        { video: { facingMode: "user" } },
+        { video: true }
+    ];
+
+    let lastErr;
+    for (const constraints of constraintSets) {
+        try {
+            stopVideoTracks();
+            const stream = await nav.mediaDevices.getUserMedia(constraints);
+            video.srcObject = stream;
+            await waitForVideoReady(video, 25000);
+            await video.play();
+            return;
+        } catch (e) {
+            lastErr = e;
+            console.warn("Webcam attempt failed:", constraints, e);
+            stopVideoTracks();
+        }
+    }
+    throw lastErr ?? new Error("Could not open webcam");
 }
 
 async function initializeModels() {
@@ -1358,6 +1402,12 @@ function showStartError(e) {
             "Браузер заблокировал камеру для этого сайта. Нажмите на значок замка слева от адреса → разрешите камеру, обновите страницу.";
     } else if (name === "NotFoundError" || /DevicesNotFound/i.test(msg)) {
         hint = "Камера не найдена. Проверьте, что она подключена и не занята другим приложением.";
+    } else if (
+        name === "AbortError" ||
+        /Timeout starting video source|metadata timeout/i.test(msg)
+    ) {
+        hint =
+            "Камера не успела запуститься. Отключите режим эмуляции устройства в DevTools (или выберите реальное устройство с камерой), закройте другие программы, использующие камеру, и обновите страницу.";
     }
     loadingElement.innerHTML = "";
     const wrap = document.createElement("div");
