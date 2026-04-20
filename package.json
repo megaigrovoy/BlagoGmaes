@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "prepare:wasm": "node scripts/copy-mediapipe-wasm.mjs",
+    "dev": "npm run prepare:wasm && vite",
+    "build": "npm run prepare:wasm && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {

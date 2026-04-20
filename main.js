@@ -60,6 +60,30 @@ const GAME_BG_TRACKS = Object.values(
     import.meta.glob('./src/assets/sounds/OST/*.mp3', { eager: true, query: '?url', import: 'default' })
 );
 
+/** Ранняя загрузка/декод mp3 — иначе первый рез на проде ждёт сеть/декодер */
+function preloadGameAudio() {
+    const urls = new Set([
+        ...Object.values(sliceSoundUrlByEmoji),
+        new URL('./src/assets/sounds/Sound Of Metal Box Hit1.mp3', import.meta.url).href,
+        new URL('./src/assets/sounds/Sound Of Metal Box Hit2.mp3', import.meta.url).href,
+        MENU_MUSIC_URL,
+        ...GAME_BG_TRACKS
+    ]);
+    for (const u of urls) {
+        if (!u) continue;
+        const a = new Audio();
+        a.preload = 'auto';
+        a.src = u;
+        void a.load();
+    }
+}
+
+/** База WASM с того же origin, что и страница (npm run prepare:wasm → public/mediapipe-wasm) */
+function getMediapipeWasmUrl() {
+    const base = import.meta.env.BASE_URL || '/';
+    return new URL('mediapipe-wasm', window.location.origin + base).href;
+}
+
 let menuMusicAudio = null;
 let gameMusicAudio = null;
 let gameMusicOnEnded = null;
@@ -427,9 +451,16 @@ let mediapipeHandDelegate = 'CPU';
 let mediapipePoseDelegate = 'CPU';
 
 async function initializeModels() {
-    const vision = await FilesetResolver.forVisionTasks(
-        `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VISION_WASM_VER}/wasm`
-    );
+    let vision;
+    const wasmLocal = getMediapipeWasmUrl();
+    try {
+        vision = await FilesetResolver.forVisionTasks(wasmLocal);
+    } catch (e) {
+        console.warn('MediaPipe wasm с этого сайта не открылся, fallback CDN:', e);
+        vision = await FilesetResolver.forVisionTasks(
+            `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VISION_WASM_VER}/wasm`
+        );
+    }
 
     const handOpts = (delegate) => ({
         baseOptions: {
@@ -474,6 +505,8 @@ async function initializeModels() {
     console.info(
         `[MediaPipe] hand: ${mediapipeHandDelegate}, pose: ${mediapipePoseDelegate} — если оба CPU, игра тяжелее; в DevTools отключите throttling.`
     );
+
+    preloadGameAudio();
 
     loadingElement.classList.remove('visible');
     showMainMenu();
