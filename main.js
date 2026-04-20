@@ -512,6 +512,13 @@ function isPoseWristHandStubConnection(start, end) {
 /** Logical game size (matches canvas buffer; avoids 100vh vs innerHeight stretch on mobile) */
 let gameLayout = { w: 800, h: 600, minSide: 600 };
 
+/**
+ * Потолок длинной стороны **буфера** canvas (не CSS). На широком мониторе / Responsive DevTools
+ * иначе 2000+ px → тяжёлый fill+тени и заметные фризы при hand на CPU.
+ */
+const MAX_CANVAS_LONG_EDGE_PX = 1280;
+let loggedCanvasBufferCap = false;
+
 function readViewportSize() {
     const vv = window.visualViewport;
     const w = Math.max(1, Math.floor(vv?.width ?? window.innerWidth));
@@ -524,28 +531,45 @@ let lastResizeW = 0;
 let lastResizeH = 0;
 
 function resizeCanvas() {
-    const { w, h } = readViewportSize();
-    if (w === lastResizeW && h === lastResizeH) return;
-    lastResizeW = w;
-    lastResizeH = h;
-    gameLayout.w = w;
-    gameLayout.h = h;
-    gameLayout.minSide = Math.min(w, h);
+    const { w: vw, h: vh } = readViewportSize();
+    if (vw === lastResizeW && vh === lastResizeH) return;
+    lastResizeW = vw;
+    lastResizeH = vh;
 
-    canvasElement.width = w;
-    canvasElement.height = h;
-    canvasElement.style.width = `${w}px`;
-    canvasElement.style.height = `${h}px`;
+    let iw = vw;
+    let ih = vh;
+    const longEdge = Math.max(iw, ih);
+    if (longEdge > MAX_CANVAS_LONG_EDGE_PX) {
+        const s = MAX_CANVAS_LONG_EDGE_PX / longEdge;
+        iw = Math.max(1, Math.floor(vw * s));
+        ih = Math.max(1, Math.floor(vh * s));
+    }
+
+    if ((iw < vw || ih < vh) && !loggedCanvasBufferCap) {
+        loggedCanvasBufferCap = true;
+        console.info(
+            `[NeonNinjaCat] буфер canvas ограничен ${iw}×${ih} px (окно ${vw}×${vh}) — иначе полный размер сильно грузит GPU/CPU`
+        );
+    }
+
+    gameLayout.w = iw;
+    gameLayout.h = ih;
+    gameLayout.minSide = Math.min(iw, ih);
+
+    canvasElement.width = iw;
+    canvasElement.height = ih;
+    canvasElement.style.width = `${vw}px`;
+    canvasElement.style.height = `${vh}px`;
 
     const gc = document.getElementById('game-container');
     if (gc) {
-        gc.style.width = `${w}px`;
-        gc.style.height = `${h}px`;
+        gc.style.width = `${vw}px`;
+        gc.style.height = `${vh}px`;
     }
-    document.documentElement.style.height = `${h}px`;
-    document.body.style.height = `${h}px`;
-    document.documentElement.style.width = `${w}px`;
-    document.body.style.width = `${w}px`;
+    document.documentElement.style.height = `${vh}px`;
+    document.body.style.height = `${vh}px`;
+    document.documentElement.style.width = `${vw}px`;
+    document.body.style.width = `${vw}px`;
 }
 
 /** Частые события visualViewport (адресная строка, зум) иначе десятки раз сбрасывают canvas */
