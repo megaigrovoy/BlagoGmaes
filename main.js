@@ -6,6 +6,10 @@ const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
 const STORAGE_SFX_OFF = 'neon-ninja-sfx-off';
 const STORAGE_MUSIC_OFF = 'neon-ninja-music-off';
 
+/** Добавьте ?perf=1 к URL — в консоли раз в ~2.5 с среднее время кадра (поиск фризов на проде) */
+const DEBUG_FRAME_PERF =
+    typeof location !== 'undefined' && new URLSearchParams(location.search).get('perf') === '1';
+
 /** Звуки резов / металлических ударов по роботу */
 let soundEffectsEnabled = true;
 /** Фоновая музыка в меню и в игре */
@@ -135,35 +139,65 @@ function fallbackHtmlOneShot(url, volume) {
     void a.play().catch(() => {});
 }
 
+/**
+ * На проде (CDN, холодный кэш) одновременная подгрузка всех OST + параллельный decodeAudioData для SFX
+ * даёт рывки главного потока; локально кэш/диск маскирует это.
+ */
+function preloadHtmlAudioUrl(url) {
+    if (!url) return;
+    const a = new Audio();
+    a.preload = 'auto';
+    a.src = url;
+    void a.load();
+}
+
+function scheduleStaggeredOstPreload() {
+    const tracks = GAME_BG_TRACKS.filter(Boolean);
+    if (!tracks.length) return;
+    let i = 0;
+    const step = () => {
+        if (i >= tracks.length) return;
+        preloadHtmlAudioUrl(tracks[i++]);
+        setTimeout(step, 120);
+    };
+    const kick = () => step();
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(kick, { timeout: 1800 });
+    } else {
+        setTimeout(kick, 400);
+    }
+}
+
+function warmSfxAudioBuffersYielding() {
+    const ctx = getOrCreateSfxContext();
+    if (!ctx) return;
+    const sfxOnly = [
+        ...new Set([...Object.values(sliceSoundUrlByEmoji), METAL_HIT_URL_1, METAL_HIT_URL_2])
+    ].filter(Boolean);
+    void (async () => {
+        for (const u of sfxOnly) {
+            try {
+                await ensureSfxAudioBuffer(ctx, u);
+            } catch (_) {}
+            await new Promise((r) => setTimeout(r, 16));
+        }
+    })();
+}
+
 /** Ранняя загрузка/декод mp3 — иначе первый рез на проде ждёт сеть/декодер */
 function preloadGameAudio() {
-    const urls = new Set([
-        ...Object.values(sliceSoundUrlByEmoji),
-        METAL_HIT_URL_1,
-        METAL_HIT_URL_2,
-        MENU_MUSIC_URL,
-        ...GAME_BG_TRACKS
-    ]);
-    for (const u of urls) {
-        if (!u) continue;
-        const a = new Audio();
-        a.preload = 'auto';
-        a.src = u;
-        void a.load();
-    }
-    const ctx = getOrCreateSfxContext();
-    if (ctx) {
-        const sfxOnly = new Set([...Object.values(sliceSoundUrlByEmoji), METAL_HIT_URL_1, METAL_HIT_URL_2]);
-        for (const u of sfxOnly) {
-            if (!u) continue;
-            void ensureSfxAudioBuffer(ctx, u).catch(() => {});
-        }
-    }
+    const critical = [
+        ...new Set([...Object.values(sliceSoundUrlByEmoji), METAL_HIT_URL_1, METAL_HIT_URL_2, MENU_MUSIC_URL])
+    ].filter(Boolean);
+    for (const u of critical) preloadHtmlAudioUrl(u);
+    scheduleStaggeredOstPreload();
+    warmSfxAudioBuffersYielding();
 }
 
 /** База WASM с того же origin, что и страница (npm run prepare:wasm → public/mediapipe-wasm) */
 function getMediapipeWasmUrl() {
-    const base = import.meta.env.BASE_URL || '/';
+    let base = import.meta.env.BASE_URL || '/';
+    if (!base.endsWith('/')) base += '/';
     return new URL('mediapipe-wasm', window.location.origin + base).href;
 }
 
@@ -1175,6 +1209,10 @@ let tipVelocityByKey = new Map();
 const POSE_INFER_EVERY_N_VIDEO_FRAMES = 3;
 let poseVideoFrameTick = 0;
 
+let perfFrameSumMs = 0;
+let perfFrameCount = 0;
+let perfLastLogMs = 0;
+
 function gameLoop(nowTime) {
     if (!isPlaying) return;
 
@@ -1638,6 +1676,22 @@ function gameLoop(nowTime) {
         p.update(dt);
         p.draw(canvasCtx);
         if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    if (DEBUG_FRAME_PERF) {
+        const elapsed = performance.now() - startTimeMs;
+        perfFrameSumMs += elapsed;
+        perfFrameCount += 1;
+        const t = performance.now();
+        if (t - perfLastLogMs >= 2500) {
+            perfLastLogMs = t;
+            const avg = perfFrameSumMs / perfFrameCount;
+            console.info(
+                `[perf] среднее за кадр ${avg.toFixed(1)} ms (n=${perfFrameCount}). >22 ms — риск фризов; вкладка Performance.`
+            );
+            perfFrameSumMs = 0;
+            perfFrameCount = 0;
+        }
     }
 
     if (isPlaying) requestAnimationFrame(gameLoop);
