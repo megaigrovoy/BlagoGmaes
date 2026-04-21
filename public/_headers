@@ -1,2 +1,23 @@
 /*
   Permissions-Policy: camera=(self), microphone=(self)
+
+# Хэшированные ассеты Vite (JS/CSS/изображения/mp3 в assets/) — контент не меняется,
+# можно отдавать навсегда и сохранять между деплоями.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# WASM и глю-скрипты MediaPipe также не меняются между деплоями при фикс. версии пакета.
+/mediapipe-wasm/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Явный MIME для wasm — некоторые CDN/прокси иначе отдают application/octet-stream
+# и браузер не включает streaming compile.
+/*.wasm
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable
+
+# index.html — всегда свежий, чтобы новый деплой сразу отдавал новые хэш-ссылки.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate

@@ -6,6 +6,13 @@
     <title>NeonNinjaCat</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Модели MediaPipe (.task) грузятся с этого origin во время init — TLS/HTTP заранее -->
+    <link rel="preconnect" href="https://storage.googleapis.com" crossorigin />
+    <link rel="dns-prefetch" href="https://storage.googleapis.com" />
+    <!-- Базовый WASM / glue MediaPipe тянем со своего origin: запускаем загрузку параллельно main.js.
+         Без crossorigin, чтобы preload совпал с тем, как MediaPipe сам фетчит эти файлы. -->
+    <link rel="preload" href="/mediapipe-wasm/vision_wasm_internal.js" as="script" />
+    <link rel="preload" href="/mediapipe-wasm/vision_wasm_internal.wasm" as="fetch" type="application/wasm" />
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/style.css">
   </head>
