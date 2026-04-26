@@ -446,6 +446,61 @@ LEVELS.forEach((cfg, i) => {
 
 btnBackMenu.addEventListener('click', () => showMainMenu());
 
+/**
+ * Fullscreen API: на ПК и iPad/Android Chrome работает; на iPhone Safari — нет (там путь через PWA).
+ * Кнопка показывается только в меню; во время игры она лишний раз отвлекает.
+ */
+const gameContainer = document.getElementById('game-container');
+const btnFullscreen = document.getElementById('btn-fullscreen');
+const btnFullscreenLabel = btnFullscreen?.querySelector('.btn-fullscreen-label');
+
+function isFullscreenSupported() {
+    const el = gameContainer || document.documentElement;
+    return !!(
+        document.fullscreenEnabled ||
+        document.webkitFullscreenEnabled ||
+        el.requestFullscreen ||
+        el.webkitRequestFullscreen
+    );
+}
+
+function getCurrentFullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+async function enterFullscreen() {
+    const el = gameContainer || document.documentElement;
+    try {
+        if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
+        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } catch (_) {}
+}
+
+async function exitFullscreen() {
+    try {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } catch (_) {}
+}
+
+function syncFullscreenButton() {
+    if (!btnFullscreen) return;
+    const isFs = !!getCurrentFullscreenElement();
+    btnFullscreen.classList.toggle('is-active', isFs);
+    if (btnFullscreenLabel) btnFullscreenLabel.textContent = isFs ? 'Свернуть' : 'На весь экран';
+}
+
+if (btnFullscreen) {
+    if (isFullscreenSupported()) btnFullscreen.hidden = false;
+    btnFullscreen.addEventListener('click', () => {
+        if (getCurrentFullscreenElement()) void exitFullscreen();
+        else void enterFullscreen();
+    });
+    document.addEventListener('fullscreenchange', syncFullscreenButton);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenButton);
+    syncFullscreenButton();
+}
+
 /** Автозапуск после загрузки часто блокируется — тап по панели (не по кнопке уровня) включает меню */
 mainMenu.addEventListener(
     'pointerdown',

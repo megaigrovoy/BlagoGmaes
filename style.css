@@ -118,6 +118,63 @@ canvas {
   box-shadow: 0 0 14px rgba(0, 243, 255, 0.35);
 }
 
+/** Кнопка «Меню» во время игры — внизу по центру, вне поля резки */
+.btn-back-menu {
+  position: absolute;
+  left: 50%;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  pointer-events: auto;
+  padding: 0.55rem 1.4rem;
+  background: rgba(15, 15, 19, 0.82);
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.45);
+}
+
+/** Floating «На весь экран» в верхнем правом углу меню */
+.btn-fullscreen {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 243, 255, 0.35);
+  background: rgba(8, 12, 22, 0.85);
+  color: #e6faff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 6;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.btn-fullscreen[hidden] {
+  display: none;
+}
+
+.btn-fullscreen:hover {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 16px rgba(0, 243, 255, 0.35);
+}
+
+.btn-fullscreen-on,
+.btn-fullscreen-off {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.btn-fullscreen.is-active .btn-fullscreen-on { display: none; }
+.btn-fullscreen:not(.is-active) .btn-fullscreen-off { display: none; }
+
+/** В «нативном фуллскрине» на узком экране оставляем только иконку, чтобы не мешала */
+@media (max-width: 480px) {
+  .btn-fullscreen-label { display: none; }
+}
+
 .menu-overlay {
   position: absolute;
   inset: 0;
