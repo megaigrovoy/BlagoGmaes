@@ -5,6 +5,11 @@ const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
 
 const STORAGE_SFX_OFF = 'neon-ninja-sfx-off';
 const STORAGE_MUSIC_OFF = 'neon-ninja-music-off';
+/**
+ * Режим «руки из тела»: отключаем HandLandmarker и берём кисть из BlazePose (запястье + index/pinky/thumb).
+ * Снимает «потери» отдельного трекера кисти при игре в полный рост.
+ */
+const STORAGE_POSE_HANDS = 'neon-ninja-pose-hands';
 
 /** Добавьте ?perf=1 к URL — в консоли раз в ~2.5 с среднее время кадра (поиск фризов на проде) */
 const DEBUG_FRAME_PERF =
@@ -14,14 +19,19 @@ const DEBUG_FRAME_PERF =
 let soundEffectsEnabled = true;
 /** Фоновая музыка в меню и в игре */
 let musicEnabled = true;
+/** Если true — HandLandmarker не используется, кисти берём из BlazePose */
+let poseHandsOnly = false;
 
-function loadPersistedAudioSettings() {
+function loadPersistedSettings() {
     soundEffectsEnabled = localStorage.getItem(STORAGE_SFX_OFF) !== '1';
     musicEnabled = localStorage.getItem(STORAGE_MUSIC_OFF) !== '1';
+    poseHandsOnly = localStorage.getItem(STORAGE_POSE_HANDS) === '1';
     const sfxCb = document.getElementById('opt-sound-off');
     const musicCb = document.getElementById('opt-music-off');
+    const poseHandsCb = document.getElementById('opt-pose-hands');
     if (sfxCb) sfxCb.checked = !soundEffectsEnabled;
     if (musicCb) musicCb.checked = !musicEnabled;
+    if (poseHandsCb) poseHandsCb.checked = poseHandsOnly;
 }
 
 /** URL звука разреза на каждый эмодзи (6 файлов на 9 типов — часть клипов переиспользуется). */
@@ -487,7 +497,17 @@ if (optMusicOff) {
         }
     });
 }
-loadPersistedAudioSettings();
+const optPoseHands = document.getElementById('opt-pose-hands');
+if (optPoseHands) {
+    optPoseHands.addEventListener('change', () => {
+        poseHandsOnly = optPoseHands.checked;
+        if (poseHandsOnly) localStorage.setItem(STORAGE_POSE_HANDS, '1');
+        else localStorage.removeItem(STORAGE_POSE_HANDS);
+        /** Перезагрузка нужна, чтобы создать/удалить HandLandmarker корректно */
+        location.reload();
+    });
+}
+loadPersistedSettings();
 
 // Geometry configuration
 const HAND_CONNECTIONS = HandLandmarker.HAND_CONNECTIONS;
@@ -683,7 +703,11 @@ async function initializeModels() {
             `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VISION_WASM_VER}/wasm`
         );
     }
-    console.info(`[NeonNinjaCat] MediaPipe WASM: ${visionWasmSource} ← ${wasmLocal}`);
+    console.info(
+        `[NeonNinjaCat] MediaPipe WASM: ${visionWasmSource} ← ${wasmLocal}; режим: ${
+            poseHandsOnly ? 'руки из тела' : 'отдельный трекер кисти'
+        }`
+    );
 
     const handOpts = (delegate) => ({
         baseOptions: {
@@ -707,13 +731,18 @@ async function initializeModels() {
         runningMode: "VIDEO"
     });
 
-    try {
-        handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("GPU"));
-        mediapipeHandDelegate = 'GPU';
-    } catch (e) {
-        console.warn("HandLandmarker GPU failed, using CPU:", e);
-        handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("CPU"));
-        mediapipeHandDelegate = 'CPU';
+    if (poseHandsOnly) {
+        handLandmarker = null;
+        mediapipeHandDelegate = 'off';
+    } else {
+        try {
+            handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("GPU"));
+            mediapipeHandDelegate = 'GPU';
+        } catch (e) {
+            console.warn("HandLandmarker GPU failed, using CPU:", e);
+            handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("CPU"));
+            mediapipeHandDelegate = 'CPU';
+        }
     }
 
     try {
@@ -1121,8 +1150,9 @@ function lineCircleCollide(a, b, circle) {
     return distanceSq < (circle.radius * circle.radius);
 }
 
-/** Three white claw prongs at the tip, pointing along the finger */
-function drawFingertipClaw(ctx, tip, proximal) {
+/** Three white claw prongs at the tip, pointing along the finger.
+ *  handSpanPx — экранная длина «руки» (запястье→кончик), чтобы когти росли вместе с кистью. */
+function drawFingertipClaw(ctx, tip, proximal, handSpanPx) {
     let dx = tip.x - proximal.x;
     let dy = tip.y - proximal.y;
     const len = Math.hypot(dx, dy);
@@ -1134,18 +1164,20 @@ function drawFingertipClaw(ctx, tip, proximal) {
         dy /= len;
     }
     const baseAng = Math.atan2(dy, dx);
+    /** База ~120 px ≈ обычная рука перед камерой; clamp, чтобы на близком/далёком плане не уезжало в крайности */
+    const scale = Math.max(0.7, Math.min(3.5, (handSpanPx || 120) / 120));
     ctx.save();
     ctx.translate(tip.x, tip.y);
     ctx.rotate(baseAng);
     ctx.fillStyle = '#f4f6ff';
     ctx.strokeStyle = 'rgba(200, 215, 255, 0.92)';
-    ctx.lineWidth = 1.2;
-    ctx.shadowColor = 'rgba(0, 243, 255, 0.45)';
-    ctx.shadowBlur = 6;
+    ctx.lineWidth = 1.4 * scale;
+    ctx.shadowColor = 'rgba(0, 243, 255, 0.6)';
+    ctx.shadowBlur = 9 * scale;
     const prongs = [
-        { rot: -0.34, reach: 17, half: 4.2 },
-        { rot: 0, reach: 23, half: 5 },
-        { rot: 0.34, reach: 17, half: 4.2 }
+        { rot: -0.34, reach: 28 * scale, half: 6.5 * scale },
+        { rot: 0,     reach: 38 * scale, half: 8.0 * scale },
+        { rot: 0.34,  reach: 28 * scale, half: 6.5 * scale }
     ];
     for (const p of prongs) {
         ctx.save();
@@ -1191,6 +1223,82 @@ function buildKeyedHands(handResults) {
         }
         return { key, landmarks: it.lm };
     });
+}
+
+/**
+ * Из BlazePose (33 точки) собираем «псевдо-кисть» в формате HandLandmarker (21 точка),
+ * чтобы дальше работал тот же конвейер слайс-сегментов и клешней.
+ * Заполняем только нужное: 0 (запястье), 4 (большой), 7 (PIP индекса), 8 (индекс), 19 (DIP мизинца), 20 (мизинец).
+ * Остальные индексы дублируем валидными значениями, чтобы getScreenPoint никогда не падал.
+ */
+const POSE_BODY_HANDS = [
+    { key: 'PoseLeft',  wristIdx: 15, indexIdx: 19, pinkyIdx: 17, thumbIdx: 21 },
+    { key: 'PoseRight', wristIdx: 16, indexIdx: 20, pinkyIdx: 18, thumbIdx: 22 }
+];
+/** В режиме pose-hands сегменты считаем только по индексу + мизинцу: они стабильнее всего у BlazePose */
+const POSE_HAND_TIP_INDICES = [8, 20];
+/** Минимальная видимость запястья BlazePose, ниже которой кисть не используем */
+const POSE_HAND_MIN_VISIBILITY = 0.55;
+
+function midpoint(a, b) {
+    return { x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5 };
+}
+
+function buildSyntheticHandFromPose(poseLandmarks, def) {
+    const wrist = poseLandmarks[def.wristIdx];
+    const indexT = poseLandmarks[def.indexIdx];
+    const pinkyT = poseLandmarks[def.pinkyIdx];
+    const thumbT = poseLandmarks[def.thumbIdx];
+    if (!wrist || !indexT || !pinkyT) return null;
+    const vis = wrist.visibility ?? 1;
+    if (vis < POSE_HAND_MIN_VISIBILITY) return null;
+
+    const indexPip = midpoint(wrist, indexT);
+    const pinkyDip = midpoint(wrist, pinkyT);
+    const middleT = midpoint(indexT, pinkyT);
+    const middlePip = midpoint(wrist, middleT);
+    const ringT = midpoint(middleT, pinkyT);
+    const ringPip = midpoint(wrist, ringT);
+    const thumb = thumbT || midpoint(wrist, indexT);
+
+    const lm = new Array(21);
+    for (let i = 0; i < 21; i++) lm[i] = wrist;
+    lm[0] = wrist;
+    lm[1] = midpoint(wrist, thumb);
+    lm[2] = midpoint(wrist, thumb);
+    lm[3] = midpoint(wrist, thumb);
+    lm[4] = thumb;
+    lm[5] = midpoint(wrist, indexT);
+    lm[6] = midpoint(wrist, indexT);
+    lm[7] = indexPip;
+    lm[8] = indexT;
+    lm[9]  = middlePip;
+    lm[10] = middlePip;
+    lm[11] = middlePip;
+    lm[12] = middleT;
+    lm[13] = ringPip;
+    lm[14] = ringPip;
+    lm[15] = ringPip;
+    lm[16] = ringT;
+    lm[17] = pinkyDip;
+    lm[18] = pinkyDip;
+    lm[19] = pinkyDip;
+    lm[20] = pinkyT;
+    return lm;
+}
+
+function buildKeyedHandsFromPose(poseResults) {
+    const persons = poseResults?.landmarks;
+    if (!persons?.length) return [];
+    const out = [];
+    for (let p = 0; p < persons.length; p++) {
+        for (const def of POSE_BODY_HANDS) {
+            const lm = buildSyntheticHandFromPose(persons[p], def);
+            if (!lm) continue;
+            out.push({ key: persons.length > 1 ? `${def.key}#${p}` : def.key, landmarks: lm });
+        }
+    }
+    return out;
 }
 
 /** After hand drops from detection, keep extrapolating this long (ms) */
@@ -1262,14 +1370,18 @@ function gameLoop(nowTime) {
         lastVideoTime = video.currentTime;
         /** Время кадра видео (мс) — стабильнее для VIDEO mode, чем performance.now() */
         const frameTsMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : startTimeMs;
-        try {
-            const hRes = handLandmarker.detectForVideo(video, frameTsMs);
-            if (hRes) currentHandResults = hRes;
-        } catch (err) {
-            console.warn("HandLandmarker detectForVideo:", err);
+        if (handLandmarker) {
+            try {
+                const hRes = handLandmarker.detectForVideo(video, frameTsMs);
+                if (hRes) currentHandResults = hRes;
+            } catch (err) {
+                console.warn("HandLandmarker detectForVideo:", err);
+            }
         }
+        /** В режиме pose-hands поза несёт информацию о кистях — гонять её каждый кадр */
+        const poseEveryN = poseHandsOnly ? 1 : POSE_INFER_EVERY_N_VIDEO_FRAMES;
         poseVideoFrameTick += 1;
-        if (poseVideoFrameTick >= POSE_INFER_EVERY_N_VIDEO_FRAMES) {
+        if (poseVideoFrameTick >= poseEveryN) {
             poseVideoFrameTick = 0;
             try {
                 const pRes = poseLandmarker.detectForVideo(video, frameTsMs);
@@ -1325,7 +1437,9 @@ function gameLoop(nowTime) {
             for (const connection of POSE_CONNECTIONS) {
                 // Skip drawing face lines to replace them with Ninja Mask 
                 if (connection.start <= 10 && connection.end <= 10) continue;
-                if (isPoseWristHandStubConnection(connection.start, connection.end)) continue;
+                /** В pose-hands режиме рисуем «огрызок кисти» позы — иначе скрываем,
+                 *  потому что отдельный HandLandmarker даёт более точные пальцы. */
+                if (!poseHandsOnly && isPoseWristHandStubConnection(connection.start, connection.end)) continue;
 
                 const a = getScreenPoint(landmarks[connection.start]);
                 const b = getScreenPoint(landmarks[connection.end]);
@@ -1495,10 +1609,13 @@ function gameLoop(nowTime) {
         }
     }
 
-    const keyedHands =
-        currentHandResults?.landmarks?.length > 0
+    const keyedHands = poseHandsOnly
+        ? buildKeyedHandsFromPose(currentPoseResults)
+        : currentHandResults?.landmarks?.length > 0
             ? buildKeyedHands(currentHandResults)
             : [];
+    /** В pose-hands у нас валидные только два кончика; в обычном режиме — все четыре */
+    const activeTipIndices = poseHandsOnly ? POSE_HAND_TIP_INDICES : SLICE_FINGERTIP_INDICES;
 
     const tPerf = performance.now();
     const activeKeys = new Set(keyedHands.map((h) => h.key));
@@ -1518,7 +1635,7 @@ function gameLoop(nowTime) {
             velMap = {};
             tipVelocityByKey.set(key, velMap);
         }
-        for (const tipIdx of SLICE_FINGERTIP_INDICES) {
+        for (const tipIdx of activeTipIndices) {
             const tip = getScreenPoint(landmarks[tipIdx]);
             if (prev[tipIdx]) {
                 appendSweepCollisionSegments(handSegments, prev[tipIdx], tip);
@@ -1545,7 +1662,7 @@ function gameLoop(nowTime) {
         const velMap = tipVelocityByKey.get(key);
         if (!prev || !velMap) continue;
 
-        for (const tipIdx of SLICE_FINGERTIP_INDICES) {
+        for (const tipIdx of activeTipIndices) {
             if (!prev[tipIdx]) continue;
             const v = velMap[tipIdx];
             if (!v) continue;
@@ -1569,27 +1686,31 @@ function gameLoop(nowTime) {
     // Draw Hands (same order as keyedHands)
     if (keyedHands.length > 0) {
         for (const { key, landmarks } of keyedHands) {
-            canvasCtx.strokeStyle = '#ff00ea';
-            canvasCtx.lineWidth = 10;
-            canvasCtx.shadowColor = '#ff00ea';
-            canvasCtx.shadowBlur = 20;
-            
-            for (const connection of HAND_CONNECTIONS) {
-                const a = getScreenPoint(landmarks[connection.start]);
-                const b = getScreenPoint(landmarks[connection.end]);
-                
-                canvasCtx.beginPath();
-                canvasCtx.moveTo(a.x, a.y);
-                canvasCtx.lineTo(b.x, b.y);
-                canvasCtx.stroke();
-            }
-            canvasCtx.shadowBlur = 0; // reset glow
+            if (!poseHandsOnly) {
+                canvasCtx.strokeStyle = '#ff00ea';
+                canvasCtx.lineWidth = 10;
+                canvasCtx.shadowColor = '#ff00ea';
+                canvasCtx.shadowBlur = 20;
 
-            SLICE_FINGERTIP_INDICES.forEach((tipIndex) => {
+                for (const connection of HAND_CONNECTIONS) {
+                    const a = getScreenPoint(landmarks[connection.start]);
+                    const b = getScreenPoint(landmarks[connection.end]);
+
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(a.x, a.y);
+                    canvasCtx.lineTo(b.x, b.y);
+                    canvasCtx.stroke();
+                }
+                canvasCtx.shadowBlur = 0; // reset glow
+            }
+
+            const wristScreen = getScreenPoint(landmarks[0]);
+            activeTipIndices.forEach((tipIndex) => {
                 const tip = getScreenPoint(landmarks[tipIndex]);
                 const baseIdx = TIP_CLAW_BASE[tipIndex];
                 const proximal = getScreenPoint(landmarks[baseIdx]);
-                drawFingertipClaw(canvasCtx, tip, proximal);
+                const handSpanPx = Math.hypot(tip.x - wristScreen.x, tip.y - wristScreen.y);
+                drawFingertipClaw(canvasCtx, tip, proximal, handSpanPx);
             });
         }
     }
