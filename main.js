@@ -1134,10 +1134,10 @@ function buildSyntheticHandFromPose(poseLandmarks, def) {
  * по средней X запястий (15+16) — левый игрок всегда #0, правый #1.
  * Это держит prevFingertipsByKey / tipVelocityByKey стабильными для двух игроков.
  */
-function buildKeyedHandsFromPose(poseResults) {
+function getOrderedPersons(poseResults) {
     const persons = poseResults?.landmarks;
     if (!persons?.length) return [];
-    const ordered = persons
+    return persons
         .map((lm, idx) => {
             const lw = lm[15];
             const rw = lm[16];
@@ -1146,16 +1146,82 @@ function buildKeyedHandsFromPose(poseResults) {
             if (rw) xs.push(rw.x);
             return { lm, idx, sortX: xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : idx };
         })
-        .sort((a, b) => a.sortX - b.sortX);
+        .sort((a, b) => a.sortX - b.sortX)
+        .map((p, i) => ({ lm: p.lm, key: `Pose#${i}` }));
+}
+
+function buildKeyedHandsFromPose(poseResults) {
+    const ordered = getOrderedPersons(poseResults);
+    if (!ordered.length) return [];
     const out = [];
     for (let p = 0; p < ordered.length; p++) {
+        const suffix = ordered.length > 1 ? `#${p}` : '';
         for (const def of POSE_BODY_HANDS) {
             const lm = buildSyntheticHandFromPose(ordered[p].lm, def);
             if (!lm) continue;
-            out.push({ key: ordered.length > 1 ? `${def.key}#${p}` : def.key, landmarks: lm });
+            out.push({ key: `${def.key}${suffix}`, landmarks: lm });
         }
     }
     return out;
+}
+
+/**
+ * BlazePose выдаёт лендмарки с заметным шумом — особенно лицо (0..10) и кисти-«огрызки» (17..22).
+ * Для **отрисовки** скелета и маски используем экспоненциально сглаженные точки
+ * (per-person, в нормализованных координатах, до проекции на canvas).
+ * Для построения кистей под коллизию остаются СЫРЫЕ лендмарки —
+ * иначе появляется заметная задержка между взмахом и резом.
+ *
+ * Лицу нужно тише (маска маленькая, шум виден), телу — чуть резче, чтобы не «уезжало».
+ * При телепорте (резкий скачок) стейт сбрасываем, чтобы не «ползло».
+ */
+const FACE_LM_INDICES = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+const POSE_FACE_ALPHA = 0.28;
+const POSE_BODY_ALPHA = 0.40;
+const POSE_TELEPORT_THRESHOLD = 0.22;
+const POSE_STATE_TTL_MS = 600;
+/** Map<personKey, { lm: { [idx]: {x, y, z, visibility} }, lastSeenMs }> */
+const poseSmoothByKey = new Map();
+
+function smoothPoseLandmarks(personKey, rawLm, nowMs) {
+    let state = poseSmoothByKey.get(personKey);
+    if (!state) {
+        state = { lm: {}, lastSeenMs: nowMs };
+        poseSmoothByKey.set(personKey, state);
+    }
+    state.lastSeenMs = nowMs;
+    const out = new Array(rawLm.length);
+    for (let i = 0; i < rawLm.length; i++) {
+        const r = rawLm[i];
+        if (!r) {
+            out[i] = r;
+            continue;
+        }
+        const prev = state.lm[i];
+        const alpha = FACE_LM_INDICES.has(i) ? POSE_FACE_ALPHA : POSE_BODY_ALPHA;
+        if (!prev || Math.hypot(r.x - prev.x, r.y - prev.y) > POSE_TELEPORT_THRESHOLD) {
+            state.lm[i] = { x: r.x, y: r.y, z: r.z, visibility: r.visibility };
+        } else {
+            state.lm[i] = {
+                x: prev.x * (1 - alpha) + r.x * alpha,
+                y: prev.y * (1 - alpha) + r.y * alpha,
+                z: (prev.z ?? 0) * (1 - alpha) + (r.z ?? 0) * alpha,
+                visibility: r.visibility
+            };
+        }
+        out[i] = state.lm[i];
+    }
+    return out;
+}
+
+function prunePoseSmoothState(activeKeys, nowMs) {
+    for (const k of [...poseSmoothByKey.keys()]) {
+        if (activeKeys.has(k)) continue;
+        const s = poseSmoothByKey.get(k);
+        if (!s || nowMs - s.lastSeenMs > POSE_STATE_TTL_MS) {
+            poseSmoothByKey.delete(k);
+        }
+    }
 }
 
 /** After hand drops from detection, keep extrapolating this long (ms) */
@@ -1266,7 +1332,12 @@ function gameLoop(nowTime) {
 
     // Draw Pose
     if (currentPoseResults && currentPoseResults.landmarks) {
-        for (const landmarks of currentPoseResults.landmarks) {
+        const orderedPersons = getOrderedPersons(currentPoseResults);
+        const nowPoseMs = performance.now();
+        const activePoseKeys = new Set(orderedPersons.map((p) => p.key));
+        prunePoseSmoothState(activePoseKeys, nowPoseMs);
+        for (const { lm: rawLm, key: poseKey } of orderedPersons) {
+            const landmarks = smoothPoseLandmarks(poseKey, rawLm, nowPoseMs);
             canvasCtx.strokeStyle = 'rgba(0, 243, 255, 0.8)';
             canvasCtx.lineWidth = 6;
             canvasCtx.shadowColor = 'rgba(0, 243, 255, 1)';
