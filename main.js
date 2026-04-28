@@ -1150,14 +1150,68 @@ function getOrderedPersons(poseResults) {
         .map((p, i) => ({ lm: p.lm, key: `Pose#${i}` }));
 }
 
+/**
+ * BlazePose у второго человека (вторичный детект) даёт заметно более шумные точки кистей
+ * (15..22) — клешни «дёргаются». Делаем лёгкое EMA-сглаживание именно ВХОДНЫХ точек кисти,
+ * per-person, до построения синтетической кисти. Высокий alpha = маленькая задержка
+ * (1–2 кадра), но достаточно, чтобы убрать пиксельный jitter.
+ */
+const HAND_INPUT_INDICES = [15, 16, 17, 18, 19, 20, 21, 22];
+const HAND_INPUT_ALPHA = 0.55;
+const HAND_INPUT_TELEPORT = 0.20;
+const HAND_INPUT_TTL_MS = 600;
+const handInputSmoothByKey = new Map();
+
+function smoothHandInputLm(personKey, rawLm, nowMs) {
+    let state = handInputSmoothByKey.get(personKey);
+    if (!state) {
+        state = { lm: {}, lastSeenMs: nowMs };
+        handInputSmoothByKey.set(personKey, state);
+    }
+    state.lastSeenMs = nowMs;
+    const out = rawLm.slice();
+    for (const i of HAND_INPUT_INDICES) {
+        const r = rawLm[i];
+        if (!r) continue;
+        const prev = state.lm[i];
+        if (!prev || Math.hypot(r.x - prev.x, r.y - prev.y) > HAND_INPUT_TELEPORT) {
+            state.lm[i] = { x: r.x, y: r.y, z: r.z, visibility: r.visibility };
+        } else {
+            const a = HAND_INPUT_ALPHA;
+            state.lm[i] = {
+                x: prev.x * (1 - a) + r.x * a,
+                y: prev.y * (1 - a) + r.y * a,
+                z: (prev.z ?? 0) * (1 - a) + (r.z ?? 0) * a,
+                visibility: r.visibility
+            };
+        }
+        out[i] = state.lm[i];
+    }
+    return out;
+}
+
+function pruneHandInputSmoothState(activeKeys, nowMs) {
+    for (const k of [...handInputSmoothByKey.keys()]) {
+        if (activeKeys.has(k)) continue;
+        const s = handInputSmoothByKey.get(k);
+        if (!s || nowMs - s.lastSeenMs > HAND_INPUT_TTL_MS) {
+            handInputSmoothByKey.delete(k);
+        }
+    }
+}
+
 function buildKeyedHandsFromPose(poseResults) {
     const ordered = getOrderedPersons(poseResults);
     if (!ordered.length) return [];
+    const nowMs = performance.now();
+    const activeKeys = new Set(ordered.map((p) => p.key));
+    pruneHandInputSmoothState(activeKeys, nowMs);
     const out = [];
     for (let p = 0; p < ordered.length; p++) {
         const suffix = ordered.length > 1 ? `#${p}` : '';
+        const stableLm = smoothHandInputLm(ordered[p].key, ordered[p].lm, nowMs);
         for (const def of POSE_BODY_HANDS) {
-            const lm = buildSyntheticHandFromPose(ordered[p].lm, def);
+            const lm = buildSyntheticHandFromPose(stableLm, def);
             if (!lm) continue;
             out.push({ key: `${def.key}${suffix}`, landmarks: lm });
         }
