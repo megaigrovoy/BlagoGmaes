@@ -1,37 +1,27 @@
-import { FilesetResolver, HandLandmarker, PoseLandmarker } from '@mediapipe/tasks-vision';
+import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 
 /** Совпадает с dependencies в package.json — не @latest, стабильнее кэш CDN */
 const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
 
 const STORAGE_SFX_OFF = 'neon-ninja-sfx-off';
 const STORAGE_MUSIC_OFF = 'neon-ninja-music-off';
-/**
- * Режим «руки из тела»: отключаем HandLandmarker и берём кисть из BlazePose (запястье + index/pinky/thumb).
- * Снимает «потери» отдельного трекера кисти при игре в полный рост.
- */
-const STORAGE_POSE_HANDS = 'neon-ninja-pose-hands';
 
 /** Добавьте ?perf=1 к URL — в консоли раз в ~2.5 с среднее время кадра (поиск фризов на проде) */
 const DEBUG_FRAME_PERF =
     typeof location !== 'undefined' && new URLSearchParams(location.search).get('perf') === '1';
 
-/** Звуки резов / металлических ударов по роботу */
+/** Звуки резов */
 let soundEffectsEnabled = true;
 /** Фоновая музыка в меню и в игре */
 let musicEnabled = true;
-/** Если true — HandLandmarker не используется, кисти берём из BlazePose */
-let poseHandsOnly = false;
 
 function loadPersistedSettings() {
     soundEffectsEnabled = localStorage.getItem(STORAGE_SFX_OFF) !== '1';
     musicEnabled = localStorage.getItem(STORAGE_MUSIC_OFF) !== '1';
-    poseHandsOnly = localStorage.getItem(STORAGE_POSE_HANDS) === '1';
     const sfxCb = document.getElementById('opt-sound-off');
     const musicCb = document.getElementById('opt-music-off');
-    const poseHandsCb = document.getElementById('opt-pose-hands');
     if (sfxCb) sfxCb.checked = !soundEffectsEnabled;
     if (musicCb) musicCb.checked = !musicEnabled;
-    if (poseHandsCb) poseHandsCb.checked = poseHandsOnly;
 }
 
 /** URL звука разреза на каждый эмодзи (6 файлов на 9 типов — часть клипов переиспользуется). */
@@ -44,21 +34,12 @@ const sliceSoundUrlByEmoji = {
     '🥩': new URL('./src/assets/sounds/Sound Of Meat Slice2.mp3', import.meta.url).href,
     '🥦': new URL('./src/assets/sounds/Sound Of Fruit Slice 2.mp3', import.meta.url).href,
     '🥬': new URL('./src/assets/sounds/Sound Of Fruit Slice.mp3', import.meta.url).href,
-    '🍆': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href,
-    '🤖': new URL('./src/assets/sounds/Sound Of Fruit Slice 4.mp3', import.meta.url).href
+    '🍆': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href
 };
-
-const METAL_HIT_URL_1 = new URL('./src/assets/sounds/Sound Of Metal Box Hit1.mp3', import.meta.url).href;
-const METAL_HIT_URL_2 = new URL('./src/assets/sounds/Sound Of Metal Box Hit2.mp3', import.meta.url).href;
 
 function playSliceSound(emoji) {
     if (!soundEffectsEnabled) return;
     playOneShotSfx(sliceSoundUrlByEmoji[emoji], 0.88);
-}
-
-function playRobotMetalHit(which) {
-    if (!soundEffectsEnabled) return;
-    playOneShotSfx(which === 1 ? METAL_HIT_URL_1 : METAL_HIT_URL_2, 0.9);
 }
 
 const MENU_MUSIC_URL = new URL('./src/assets/sounds/menu.mp3', import.meta.url).href;
@@ -182,7 +163,7 @@ function warmSfxAudioBuffersYielding() {
     const ctx = getOrCreateSfxContext();
     if (!ctx) return;
     const sfxOnly = [
-        ...new Set([...Object.values(sliceSoundUrlByEmoji), METAL_HIT_URL_1, METAL_HIT_URL_2])
+        ...new Set(Object.values(sliceSoundUrlByEmoji))
     ].filter(Boolean);
     void (async () => {
         for (const u of sfxOnly) {
@@ -198,7 +179,7 @@ function warmSfxAudioBuffersYielding() {
 function preloadGameAudio() {
     if (soundEffectsEnabled) {
         const sfxUrls = [
-            ...new Set([...Object.values(sliceSoundUrlByEmoji), METAL_HIT_URL_1, METAL_HIT_URL_2])
+            ...new Set(Object.values(sliceSoundUrlByEmoji))
         ].filter(Boolean);
         for (const u of sfxUrls) preloadHtmlAudioUrl(u);
         warmSfxAudioBuffersYielding();
@@ -355,7 +336,6 @@ const hudGame = document.getElementById('hud-game');
 const levelDisplay = document.getElementById('level-display');
 const btnBackMenu = document.getElementById('btn-back-menu');
 
-let handLandmarker;
 let poseLandmarker;
 let lastVideoTime = -1;
 let score = 0;
@@ -363,14 +343,14 @@ let fruits = [];
 let particles = [];
 let isPlaying = false;
 
-/** maxConcurrent = unsliced fruits cap; spawnIntervalMs = try spawn at most this often; onlyRobots = тестовый режим */
+/** maxConcurrent = unsliced fruits cap; spawnIntervalMs = try spawn at most this often */
 const LEVELS = [
     { maxConcurrent: 1, spawnIntervalMs: 2200 },
     { maxConcurrent: 2, spawnIntervalMs: 1900 },
     { maxConcurrent: 3, spawnIntervalMs: 1550 },
     { maxConcurrent: 4, spawnIntervalMs: 1250 },
     { maxConcurrent: 5, spawnIntervalMs: 1050 },
-    { maxConcurrent: 4, spawnIntervalMs: 1000, onlyRobots: true }
+    { maxConcurrent: 6, spawnIntervalMs: 950 }
 ];
 /** Кадров подряд без пересечения с предметом, чтобы снова считать «новый вход» (трекинг мерцает на границе круга) */
 const CONTACT_EXIT_DEBOUNCE_FRAMES = 7;
@@ -415,9 +395,7 @@ function startLevel(levelIndex) {
     const cfg = getCurrentLevelConfig();
     score = 0;
     scoreDisplay.innerText = `Score: ${score}`;
-    levelDisplay.textContent = cfg.onlyRobots
-        ? `Уровень ${currentLevelIndex + 1} · тест · только роботы`
-        : `Уровень ${currentLevelIndex + 1} · одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
+    levelDisplay.textContent = `Уровень ${currentLevelIndex + 1} · одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
     fruits.length = 0;
     particles.length = 0;
     lastSpawnTime = Date.now();
@@ -438,7 +416,7 @@ LEVELS.forEach((cfg, i) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'level-btn';
-    const sub = cfg.onlyRobots ? 'тест · только роботы' : `одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
+    const sub = `одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
     btn.innerHTML = `<span class="level-title">Уровень ${i + 1}</span><span class="level-sub">${sub}</span>`;
     btn.addEventListener('click', () => startLevel(i));
     levelGrid.appendChild(btn);
@@ -552,36 +530,10 @@ if (optMusicOff) {
         }
     });
 }
-const optPoseHands = document.getElementById('opt-pose-hands');
-if (optPoseHands) {
-    optPoseHands.addEventListener('change', () => {
-        poseHandsOnly = optPoseHands.checked;
-        if (poseHandsOnly) localStorage.setItem(STORAGE_POSE_HANDS, '1');
-        else localStorage.removeItem(STORAGE_POSE_HANDS);
-        /** Перезагрузка нужна, чтобы создать/удалить HandLandmarker корректно */
-        location.reload();
-    });
-}
 loadPersistedSettings();
 
 // Geometry configuration
-const HAND_CONNECTIONS = HandLandmarker.HAND_CONNECTIONS;
 const POSE_CONNECTIONS = PoseLandmarker.POSE_CONNECTIONS;
-
-/**
- * Короткий «каркас кисти» у BlazePose (запястье + пальцевые точки) — рисуется голубым
- * рядом с рукой MediaPipe и даёт лишний треугольник. Линии предплечья 13–15 / 14–16 оставляем.
- */
-function isPoseWristHandStubConnection(start, end) {
-    const a = Math.min(start, end);
-    const b = Math.max(start, end);
-    return (
-        (a === 15 && (b === 17 || b === 19 || b === 21)) ||
-        (a === 17 && b === 19) ||
-        (a === 16 && (b === 18 || b === 20 || b === 22)) ||
-        (a === 18 && b === 20)
-    );
-}
 
 // Resize canvas to match window completely
 /** Logical game size (matches canvas buffer; avoids 100vh vs innerHeight stretch on mobile) */
@@ -741,8 +693,7 @@ async function setupWebcam() {
     throw lastErr ?? new Error("Could not open webcam");
 }
 
-/** В консоли видно, не ушли ли оба лендмаркера на CPU (тогда FPS падает сильно) */
-let mediapipeHandDelegate = 'CPU';
+/** В консоли видно, ушёл ли pose на CPU (тогда FPS падает сильно) */
 let mediapipePoseDelegate = 'CPU';
 
 async function initializeModels() {
@@ -758,24 +709,7 @@ async function initializeModels() {
             `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VISION_WASM_VER}/wasm`
         );
     }
-    console.info(
-        `[NeonNinjaCat] MediaPipe WASM: ${visionWasmSource} ← ${wasmLocal}; режим: ${
-            poseHandsOnly ? 'руки из тела' : 'отдельный трекер кисти'
-        }`
-    );
-
-    const handOpts = (delegate) => ({
-        baseOptions: {
-            modelAssetPath:
-                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-            delegate
-        },
-        runningMode: "VIDEO",
-        numHands: 2,
-        minHandDetectionConfidence: 0.45,
-        minHandPresenceConfidence: 0.4,
-        minTrackingConfidence: 0.35
-    });
+    console.info(`[NeonNinjaCat] MediaPipe WASM: ${visionWasmSource} ← ${wasmLocal}`);
 
     const poseOpts = (delegate) => ({
         baseOptions: {
@@ -783,22 +717,10 @@ async function initializeModels() {
                 "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
             delegate
         },
-        runningMode: "VIDEO"
+        runningMode: "VIDEO",
+        /** Двое игроков: модель ищет до двух поз, каждая даёт свою пару кистей */
+        numPoses: 2
     });
-
-    if (poseHandsOnly) {
-        handLandmarker = null;
-        mediapipeHandDelegate = 'off';
-    } else {
-        try {
-            handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("GPU"));
-            mediapipeHandDelegate = 'GPU';
-        } catch (e) {
-            console.warn("HandLandmarker GPU failed, using CPU:", e);
-            handLandmarker = await HandLandmarker.createFromOptions(vision, handOpts("CPU"));
-            mediapipeHandDelegate = 'CPU';
-        }
-    }
 
     try {
         poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts("GPU"));
@@ -810,7 +732,7 @@ async function initializeModels() {
     }
 
     console.info(
-        `[MediaPipe] hand: ${mediapipeHandDelegate}, pose: ${mediapipePoseDelegate} — если оба CPU, игра тяжелее; в DevTools отключите throttling.`
+        `[MediaPipe] pose: ${mediapipePoseDelegate} — если CPU, игра тяжелее; в DevTools отключите throttling.`
     );
 
     preloadGameAudio();
@@ -823,7 +745,7 @@ async function initializeModels() {
 const fruitEmojiTextures = {};
 
 function initFruitTextures() {
-    const emojis = ['🍌', '🍎', '🍉', '🍊', '🍗', '🥩', '🥦', '🥬', '🍆', '🤖'];
+    const emojis = ['🍌', '🍎', '🍉', '🍊', '🍗', '🥩', '🥦', '🥬', '🍆'];
     const size = 600; // max size matching largest fruit radius
     for(let e of emojis) {
         const c = document.createElement('canvas');
@@ -864,23 +786,14 @@ class Fruit {
             { emoji: '🥩', color: '#d32f2f' }, // Steak red
             { emoji: '🥦', color: '#4caf50' }, // Broccoli green
             { emoji: '🥬', color: '#8bc34a' }, // Cabbage light green
-            { emoji: '🍆', color: '#9c27b0' }, // Eggplant purple
-            { emoji: '🤖', color: '#90caf9' } // Robot (металл / неон)
+            { emoji: '🍆', color: '#9c27b0' } // Eggplant purple
         ];
-        const levelCfg = getCurrentLevelConfig();
-        const type = levelCfg.onlyRobots
-            ? fruitTypes.find((t) => t.emoji === '🤖')
-            : fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
+        const type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
         this.emoji = type.emoji;
         this.color = type.color;
-        if (this.emoji === '🤖') {
-            this.radius = Math.min(240, this.radius * 1.5);
-        }
 
         this.isSliced = false;
-        this.isRobotQuad = false;
         this.sliceOffsetX = 0;
-        this.robotHits = 0;
         this.hitFlash = 0;
         /** Путь «вошёл в предмет» vs «ещё внутри» — один рез на один проход руки */
         this._wasTouchingHand = false;
@@ -893,12 +806,8 @@ class Fruit {
         this.cutAngle = 0;
         this.rot1 = 0;
         this.rot2 = 0;
-        this.rot3 = 0;
-        this.rot4 = 0;
         this.rotSpeed1 = 0;
         this.rotSpeed2 = 0;
-        this.rotSpeed3 = 0;
-        this.rotSpeed4 = 0;
     }
 
     update(dt = 1) {
@@ -911,14 +820,9 @@ class Fruit {
         if (!this.isSliced) {
             this.rotation += this.rotationSpeed * dt;
         } else {
-            // Робот на 4 части: чуть сильнее обычного резa, без «ядреного» разлёта
-            this.sliceOffsetX += (this.isRobotQuad ? 12 : 6) * dt;
+            this.sliceOffsetX += 6 * dt;
             this.rot1 += this.rotSpeed1 * dt;
             this.rot2 += this.rotSpeed2 * dt;
-            if (this.isRobotQuad) {
-                this.rot3 += this.rotSpeed3 * dt;
-                this.rot4 += this.rotSpeed4 * dt;
-            }
         }
     }
 
@@ -938,24 +842,6 @@ class Fruit {
             }
             ctx.drawImage(texture, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
             ctx.shadowBlur = 0;
-        } else if (this.isRobotQuad) {
-            const hs = texSize / 2;
-            const dw = drawSize / 2;
-            const spread = this.sliceOffsetX * 0.82;
-            const quads = [
-                { sx: 0, sy: 0, rot: this.rot1, ang: 0 },
-                { sx: hs, sy: 0, rot: this.rot2, ang: Math.PI / 2 },
-                { sx: 0, sy: hs, rot: this.rot3, ang: Math.PI },
-                { sx: hs, sy: hs, rot: this.rot4, ang: (3 * Math.PI) / 2 }
-            ];
-            for (const q of quads) {
-                ctx.save();
-                const a = this.cutAngle + q.ang;
-                ctx.translate(Math.cos(a) * spread, Math.sin(a) * spread);
-                ctx.rotate(q.rot);
-                ctx.drawImage(texture, q.sx, q.sy, hs, hs, -dw / 2, -dw / 2, dw, dw);
-                ctx.restore();
-            }
         } else {
             ctx.save();
             ctx.translate(Math.cos(this.cutAngle + Math.PI) * this.sliceOffsetX, Math.sin(this.cutAngle + Math.PI) * this.sliceOffsetX);
@@ -1033,73 +919,6 @@ class SliceBurst {
     }
 }
 
-/** Визуальный взрыв при уничтожении робота: вспышка, расходящиеся кольца, крест */
-class RobotExplosionFx {
-    constructor(x, y, radius) {
-        this.x = x;
-        this.y = y;
-        this.radius = Math.max(40, radius);
-        this.life = 1;
-        this.rot = Math.random() * Math.PI * 2;
-    }
-    update(dt = 1) {
-        this.life -= 0.052 * dt;
-    }
-    draw(ctx) {
-        const t = Math.max(0, this.life);
-        if (t <= 0) return;
-        const u = 1 - t;
-        const maxR = this.radius;
-
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        ctx.globalCompositeOperation = 'lighter';
-
-        const coreR = maxR * (0.35 + u * 2.1);
-        ctx.globalAlpha = t * t * 0.75;
-        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
-        g.addColorStop(0, 'rgba(255,255,255,0.95)');
-        g.addColorStop(0.28, 'rgba(0,243,255,0.5)');
-        g.addColorStop(0.65, 'rgba(255,0,234,0.22)');
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(0, 0, coreR, 0, Math.PI * 2);
-        ctx.fill();
-
-        for (let k = 0; k < 3; k++) {
-            const phase = Math.min(1, u * 1.4 - k * 0.16);
-            if (phase <= 0) continue;
-            const rad = maxR * (0.55 + phase * 3.8);
-            const a = (1 - phase) * 0.55 * t;
-            ctx.globalAlpha = a;
-            ctx.strokeStyle = k % 2 === 0 ? '#00f3ff' : '#ff00ea';
-            ctx.lineWidth = 2.2 + (1 - phase) * 4.5;
-            ctx.shadowBlur = 20;
-            ctx.shadowColor = ctx.strokeStyle;
-            ctx.beginPath();
-            ctx.arc(0, 0, rad, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-
-        ctx.rotate(this.rot + u * 1.1);
-        ctx.globalAlpha = t * 0.45 * (1 - u * 0.75);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.shadowBlur = 14;
-        ctx.shadowColor = '#00f3ff';
-        const L = maxR * (1.15 + u * 2.8);
-        ctx.beginPath();
-        ctx.moveTo(-L, 0);
-        ctx.lineTo(L, 0);
-        ctx.moveTo(0, -L);
-        ctx.lineTo(0, L);
-        ctx.stroke();
-
-        ctx.restore();
-    }
-}
-
 /** kind: 'dot' — мягкое светящееся пятно; 'spark' — короткая яркая полоска-всплеск */
 class Particle {
     constructor(x, y, color, kind = 'dot') {
@@ -1173,10 +992,8 @@ class Particle {
     }
 }
 
-// MediaPipe fingertip landmarks (index..pinky) — slice hitboxes + claw draw
-const SLICE_FINGERTIP_INDICES = [8, 12, 16, 20];
 /** DIP joint used as “base” to aim claw along the finger (toward tip) */
-const TIP_CLAW_BASE = { 8: 7, 12: 11, 16: 15, 20: 19 };
+const TIP_CLAW_BASE = { 8: 7, 20: 19 };
 
 // Intersect a line segment and a circle
 function lineCircleCollide(a, b, circle) {
@@ -1251,37 +1068,7 @@ function drawFingertipClaw(ctx, tip, proximal, handSpanPx) {
 }
 
 /**
- * Stable id per physical hand. `landmarks` array order from MediaPipe can swap
- * between frames; handedness + wrist order keeps prev/collision state consistent.
- */
-function buildKeyedHands(handResults) {
-    const landmarks = handResults?.landmarks;
-    if (!landmarks?.length) return [];
-    const handedness = handResults.handedness ?? handResults.handednesses ?? [];
-    const items = landmarks.map((lm, i) => ({
-        lm,
-        label: (handedness[i]?.[0]?.categoryName || '').trim() || 'Hand',
-        wristX: lm[0].x
-    }));
-    const labelCount = {};
-    for (const it of items) {
-        labelCount[it.label] = (labelCount[it.label] || 0) + 1;
-    }
-    items.sort((a, b) => a.wristX - b.wristX);
-    const perLabelCounter = {};
-    return items.map((it) => {
-        let key = it.label;
-        if (labelCount[it.label] > 1) {
-            const n = perLabelCounter[it.label] || 0;
-            perLabelCounter[it.label] = n + 1;
-            key = `${it.label}#${n}`;
-        }
-        return { key, landmarks: it.lm };
-    });
-}
-
-/**
- * Из BlazePose (33 точки) собираем «псевдо-кисть» в формате HandLandmarker (21 точка),
+ * Из BlazePose (33 точки) собираем «псевдо-кисть» (21 точка),
  * чтобы дальше работал тот же конвейер слайс-сегментов и клешней.
  * Заполняем только нужное: 0 (запястье), 4 (большой), 7 (PIP индекса), 8 (индекс), 19 (DIP мизинца), 20 (мизинец).
  * Остальные индексы дублируем валидными значениями, чтобы getScreenPoint никогда не падал.
@@ -1342,15 +1129,30 @@ function buildSyntheticHandFromPose(poseLandmarks, def) {
     return lm;
 }
 
+/**
+ * Порядок persons между кадрами у MediaPipe не гарантирован, поэтому сортируем
+ * по средней X запястий (15+16) — левый игрок всегда #0, правый #1.
+ * Это держит prevFingertipsByKey / tipVelocityByKey стабильными для двух игроков.
+ */
 function buildKeyedHandsFromPose(poseResults) {
     const persons = poseResults?.landmarks;
     if (!persons?.length) return [];
+    const ordered = persons
+        .map((lm, idx) => {
+            const lw = lm[15];
+            const rw = lm[16];
+            const xs = [];
+            if (lw) xs.push(lw.x);
+            if (rw) xs.push(rw.x);
+            return { lm, idx, sortX: xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : idx };
+        })
+        .sort((a, b) => a.sortX - b.sortX);
     const out = [];
-    for (let p = 0; p < persons.length; p++) {
+    for (let p = 0; p < ordered.length; p++) {
         for (const def of POSE_BODY_HANDS) {
-            const lm = buildSyntheticHandFromPose(persons[p], def);
+            const lm = buildSyntheticHandFromPose(ordered[p].lm, def);
             if (!lm) continue;
-            out.push({ key: persons.length > 1 ? `${def.key}#${p}` : def.key, landmarks: lm });
+            out.push({ key: ordered.length > 1 ? `${def.key}#${p}` : def.key, landmarks: lm });
         }
     }
     return out;
@@ -1391,7 +1193,6 @@ function appendSweepCollisionSegments(segments, a, b, maxStepPx = COLLISION_SUBS
 
 let lastSpawnTime = Date.now();
 let lastFrameTime = performance.now();
-let currentHandResults = null;
 let currentPoseResults = null;
 /** Previous-frame fingertip positions: Map<handKey, { 8: {x,y}, ... }> */
 let prevFingertipsByKey = new Map();
@@ -1399,10 +1200,6 @@ let prevFingertipsByKey = new Map();
 let handKeyLastSeenMs = new Map();
 /** Smoothed screen-space velocity per tip for short dropout extrapolation */
 let tipVelocityByKey = new Map();
-
-/** Поза для маски реже рук — меньше нагрузка на главный поток при продакшен-сборке */
-const POSE_INFER_EVERY_N_VIDEO_FRAMES = 3;
-let poseVideoFrameTick = 0;
 
 let perfFrameSumMs = 0;
 let perfFrameCount = 0;
@@ -1425,25 +1222,11 @@ function gameLoop(nowTime) {
         lastVideoTime = video.currentTime;
         /** Время кадра видео (мс) — стабильнее для VIDEO mode, чем performance.now() */
         const frameTsMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : startTimeMs;
-        if (handLandmarker) {
-            try {
-                const hRes = handLandmarker.detectForVideo(video, frameTsMs);
-                if (hRes) currentHandResults = hRes;
-            } catch (err) {
-                console.warn("HandLandmarker detectForVideo:", err);
-            }
-        }
-        /** В режиме pose-hands поза несёт информацию о кистях — гонять её каждый кадр */
-        const poseEveryN = poseHandsOnly ? 1 : POSE_INFER_EVERY_N_VIDEO_FRAMES;
-        poseVideoFrameTick += 1;
-        if (poseVideoFrameTick >= poseEveryN) {
-            poseVideoFrameTick = 0;
-            try {
-                const pRes = poseLandmarker.detectForVideo(video, frameTsMs);
-                if (pRes) currentPoseResults = pRes;
-            } catch (err) {
-                console.warn("PoseLandmarker detectForVideo:", err);
-            }
+        try {
+            const pRes = poseLandmarker.detectForVideo(video, frameTsMs);
+            if (pRes) currentPoseResults = pRes;
+        } catch (err) {
+            console.warn("PoseLandmarker detectForVideo:", err);
         }
     }
 
@@ -1492,9 +1275,6 @@ function gameLoop(nowTime) {
             for (const connection of POSE_CONNECTIONS) {
                 // Skip drawing face lines to replace them with Ninja Mask 
                 if (connection.start <= 10 && connection.end <= 10) continue;
-                /** В pose-hands режиме рисуем «огрызок кисти» позы — иначе скрываем,
-                 *  потому что отдельный HandLandmarker даёт более точные пальцы. */
-                if (!poseHandsOnly && isPoseWristHandStubConnection(connection.start, connection.end)) continue;
 
                 const a = getScreenPoint(landmarks[connection.start]);
                 const b = getScreenPoint(landmarks[connection.end]);
@@ -1664,13 +1444,9 @@ function gameLoop(nowTime) {
         }
     }
 
-    const keyedHands = poseHandsOnly
-        ? buildKeyedHandsFromPose(currentPoseResults)
-        : currentHandResults?.landmarks?.length > 0
-            ? buildKeyedHands(currentHandResults)
-            : [];
-    /** В pose-hands у нас валидные только два кончика; в обычном режиме — все четыре */
-    const activeTipIndices = poseHandsOnly ? POSE_HAND_TIP_INDICES : SLICE_FINGERTIP_INDICES;
+    const keyedHands = buildKeyedHandsFromPose(currentPoseResults);
+    /** Из BlazePose валидные только два «кончика» — индекс и мизинец */
+    const activeTipIndices = POSE_HAND_TIP_INDICES;
 
     const tPerf = performance.now();
     const activeKeys = new Set(keyedHands.map((h) => h.key));
@@ -1740,25 +1516,7 @@ function gameLoop(nowTime) {
 
     // Draw Hands (same order as keyedHands)
     if (keyedHands.length > 0) {
-        for (const { key, landmarks } of keyedHands) {
-            if (!poseHandsOnly) {
-                canvasCtx.strokeStyle = '#ff00ea';
-                canvasCtx.lineWidth = 10;
-                canvasCtx.shadowColor = '#ff00ea';
-                canvasCtx.shadowBlur = 20;
-
-                for (const connection of HAND_CONNECTIONS) {
-                    const a = getScreenPoint(landmarks[connection.start]);
-                    const b = getScreenPoint(landmarks[connection.end]);
-
-                    canvasCtx.beginPath();
-                    canvasCtx.moveTo(a.x, a.y);
-                    canvasCtx.lineTo(b.x, b.y);
-                    canvasCtx.stroke();
-                }
-                canvasCtx.shadowBlur = 0; // reset glow
-            }
-
+        for (const { landmarks } of keyedHands) {
             const wristScreen = getScreenPoint(landmarks[0]);
             activeTipIndices.forEach((tipIndex) => {
                 const tip = getScreenPoint(landmarks[tipIndex]);
@@ -1806,64 +1564,23 @@ function gameLoop(nowTime) {
             }
 
             if (cutStroke) {
-                if (fruit.emoji === '🤖') {
-                    fruit.robotHits += 1;
-                    if (fruit.robotHits === 1) {
-                        playRobotMetalHit(1);
-                        fruit.hitFlash = 12;
-                    } else if (fruit.robotHits === 2) {
-                        playRobotMetalHit(2);
-                        fruit.hitFlash = 12;
-                    } else {
-                        fruit.isSliced = true;
-                        fruit.isRobotQuad = true;
-                        fruit.cutAngle = fruit.rotation;
-                        fruit.rot1 = fruit.rotation + (Math.random() - 0.5) * 0.45;
-                        fruit.rot2 = fruit.rotation + (Math.random() - 0.5) * 0.45;
-                        fruit.rot3 = fruit.rotation + (Math.random() - 0.5) * 0.45;
-                        fruit.rot4 = fruit.rotation + (Math.random() - 0.5) * 0.45;
-                        const rs = fruit.rotationSpeed;
-                        const wobble = () => (Math.random() - 0.5) * 0.22;
-                        fruit.rotSpeed1 = rs * 2.2 + wobble();
-                        fruit.rotSpeed2 = rs * -2.0 + wobble();
-                        fruit.rotSpeed3 = rs * 1.85 + wobble();
-                        fruit.rotSpeed4 = rs * -2.05 + wobble();
-                        const blast = Math.min(72, gameLayout.minSide * 0.055);
-                        fruit.vy -= blast * 0.72;
-                        fruit.vx += (Math.random() - 0.5) * blast * 0.42;
+                fruit.isSliced = true;
+                fruit.cutAngle = fruit.rotation;
+                fruit.rot1 = fruit.rotation;
+                fruit.rot2 = fruit.rotation;
+                fruit.rotSpeed1 = fruit.rotationSpeed - 0.05;
+                fruit.rotSpeed2 = fruit.rotationSpeed + 0.05;
 
-                        score += 10;
-                        scoreDisplay.innerText = `Score: ${score}`;
-                        playSliceSound(fruit.emoji);
+                score += 10;
+                scoreDisplay.innerText = `Score: ${score}`;
+                playSliceSound(fruit.emoji);
 
-                        particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
-                        particles.push(new RobotExplosionFx(fruit.x, fruit.y, fruit.radius));
-                        for (let p = 0; p < 34; p++) {
-                            particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'dot'));
-                        }
-                        for (let p = 0; p < 28; p++) {
-                            particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
-                        }
-                    }
-                } else {
-                    fruit.isSliced = true;
-                    fruit.cutAngle = fruit.rotation;
-                    fruit.rot1 = fruit.rotation;
-                    fruit.rot2 = fruit.rotation;
-                    fruit.rotSpeed1 = fruit.rotationSpeed - 0.05;
-                    fruit.rotSpeed2 = fruit.rotationSpeed + 0.05;
-
-                    score += 10;
-                    scoreDisplay.innerText = `Score: ${score}`;
-                    playSliceSound(fruit.emoji);
-
-                    particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
-                    for (let p = 0; p < 26; p++) {
-                        particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'dot'));
-                    }
-                    for (let p = 0; p < 16; p++) {
-                        particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
-                    }
+                particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
+                for (let p = 0; p < 26; p++) {
+                    particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'dot'));
+                }
+                for (let p = 0; p < 16; p++) {
+                    particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
                 }
             }
         }
