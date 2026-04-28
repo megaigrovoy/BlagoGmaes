@@ -24,7 +24,7 @@ function loadPersistedSettings() {
     if (musicCb) musicCb.checked = !musicEnabled;
 }
 
-/** URL звука разреза на каждый эмодзи (6 файлов на 9 типов — часть клипов переиспользуется). */
+/** URL звука разреза на каждый эмодзи (6 файлов на 10 типов — часть клипов переиспользуется). */
 const sliceSoundUrlByEmoji = {
     '🍌': new URL('./src/assets/sounds/Sound Of Fruit Slice.mp3', import.meta.url).href,
     '🍎': new URL('./src/assets/sounds/Sound Of Fruit Slice 2.mp3', import.meta.url).href,
@@ -34,12 +34,34 @@ const sliceSoundUrlByEmoji = {
     '🥩': new URL('./src/assets/sounds/Sound Of Meat Slice2.mp3', import.meta.url).href,
     '🥦': new URL('./src/assets/sounds/Sound Of Fruit Slice 2.mp3', import.meta.url).href,
     '🥬': new URL('./src/assets/sounds/Sound Of Fruit Slice.mp3', import.meta.url).href,
-    '🍆': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href
+    '🍆': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href,
+    '🍅': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href
 };
 
 function playSliceSound(emoji) {
     if (!soundEffectsEnabled) return;
     playOneShotSfx(sliceSoundUrlByEmoji[emoji], 0.88);
+}
+
+/** Голос, проговаривающий название продукта при его появлении (вылете) */
+const spawnVoiceUrlByEmoji = {
+    '🍌': new URL('./src/assets/sounds/stuff/banana.MP3', import.meta.url).href,
+    '🍎': new URL('./src/assets/sounds/stuff/apple.MP3', import.meta.url).href,
+    '🍉': new URL('./src/assets/sounds/stuff/watermelon.MP3', import.meta.url).href,
+    '🍊': new URL('./src/assets/sounds/stuff/orange.MP3', import.meta.url).href,
+    '🍗': new URL('./src/assets/sounds/stuff/chicken.MP3', import.meta.url).href,
+    '🥩': new URL('./src/assets/sounds/stuff/meat.MP3', import.meta.url).href,
+    '🥦': new URL('./src/assets/sounds/stuff/broccoli.MP3', import.meta.url).href,
+    '🥬': new URL('./src/assets/sounds/stuff/cabbage.MP3', import.meta.url).href,
+    '🍆': new URL('./src/assets/sounds/stuff/eggplant.MP3', import.meta.url).href,
+    '🍅': new URL('./src/assets/sounds/stuff/tomat.MP3', import.meta.url).href
+};
+
+function playSpawnVoice(emoji) {
+    if (!soundEffectsEnabled) return;
+    const url = spawnVoiceUrlByEmoji[emoji];
+    if (!url) return;
+    playOneShotSfx(url, 0.95);
 }
 
 const MENU_MUSIC_URL = new URL('./src/assets/sounds/menu.mp3', import.meta.url).href;
@@ -163,7 +185,10 @@ function warmSfxAudioBuffersYielding() {
     const ctx = getOrCreateSfxContext();
     if (!ctx) return;
     const sfxOnly = [
-        ...new Set(Object.values(sliceSoundUrlByEmoji))
+        ...new Set([
+            ...Object.values(sliceSoundUrlByEmoji),
+            ...Object.values(spawnVoiceUrlByEmoji)
+        ])
     ].filter(Boolean);
     void (async () => {
         for (const u of sfxOnly) {
@@ -179,7 +204,10 @@ function warmSfxAudioBuffersYielding() {
 function preloadGameAudio() {
     if (soundEffectsEnabled) {
         const sfxUrls = [
-            ...new Set(Object.values(sliceSoundUrlByEmoji))
+            ...new Set([
+                ...Object.values(sliceSoundUrlByEmoji),
+                ...Object.values(spawnVoiceUrlByEmoji)
+            ])
         ].filter(Boolean);
         for (const u of sfxUrls) preloadHtmlAudioUrl(u);
         warmSfxAudioBuffersYielding();
@@ -745,7 +773,7 @@ async function initializeModels() {
 const fruitEmojiTextures = {};
 
 function initFruitTextures() {
-    const emojis = ['🍌', '🍎', '🍉', '🍊', '🍗', '🥩', '🥦', '🥬', '🍆'];
+    const emojis = ['🍌', '🍎', '🍉', '🍊', '🍗', '🥩', '🥦', '🥬', '🍆', '🍅'];
     const size = 600; // max size matching largest fruit radius
     for(let e of emojis) {
         const c = document.createElement('canvas');
@@ -786,7 +814,8 @@ class Fruit {
             { emoji: '🥩', color: '#d32f2f' }, // Steak red
             { emoji: '🥦', color: '#4caf50' }, // Broccoli green
             { emoji: '🥬', color: '#8bc34a' }, // Cabbage light green
-            { emoji: '🍆', color: '#9c27b0' } // Eggplant purple
+            { emoji: '🍆', color: '#9c27b0' }, // Eggplant purple
+            { emoji: '🍅', color: '#e53935' }  // Tomato red
         ];
         const type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
         this.emoji = type.emoji;
@@ -808,6 +837,8 @@ class Fruit {
         this.rot2 = 0;
         this.rotSpeed1 = 0;
         this.rotSpeed2 = 0;
+
+        playSpawnVoice(this.emoji);
     }
 
     update(dt = 1) {
