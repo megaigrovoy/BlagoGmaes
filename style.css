@@ -179,11 +179,16 @@ canvas {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 1.5rem;
+  padding: max(0.75rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(0.75rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
   z-index: 5;
   pointer-events: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   /* Полностью без backdrop-filter — на Windows+Chrome размытие часто даёт рывки при hover соседей */
   background: rgba(8, 8, 12, 0.94);
 }
@@ -202,6 +207,12 @@ canvas {
   box-shadow: 0 0 40px rgba(0, 243, 255, 0.15), 0 0 60px rgba(255, 0, 234, 0.08);
   text-align: center;
   transform: translateZ(0);
+  flex-shrink: 0;
+  margin: auto 0;
+  max-height: min(92vh, 92dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .menu-hero-img {
@@ -251,6 +262,78 @@ canvas {
   color: rgba(0, 243, 255, 0.92);
   margin-bottom: 0.75rem;
   text-shadow: 0 0 12px rgba(0, 243, 255, 0.35);
+}
+
+.menu-player-row {
+  margin-bottom: 1rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 0, 234, 0.28);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.menu-player-label {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 0.55rem;
+}
+
+.menu-player-segment {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.menu-player-pill {
+  flex: 1;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+
+.menu-player-pill input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+
+.menu-player-pill input:focus-visible + span {
+  outline: 2px solid rgba(0, 243, 255, 0.75);
+  outline-offset: 3px;
+}
+
+.menu-player-pill span {
+  display: block;
+  text-align: center;
+  padding: 0.55rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.78);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.menu-player-pill:hover span {
+  border-color: rgba(0, 243, 255, 0.35);
+}
+
+.menu-player-pill input:checked + span {
+  border-color: rgba(0, 243, 255, 0.65);
+  background: linear-gradient(125deg, rgba(0, 243, 255, 0.28) 0%, rgba(255, 0, 234, 0.14) 100%);
+  color: #fff;
+  box-shadow: 0 0 14px rgba(0, 243, 255, 0.28);
+}
+
+.menu-player-hint {
+  margin: 0.65rem 0 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.52);
 }
 
 .menu-option-toggle {

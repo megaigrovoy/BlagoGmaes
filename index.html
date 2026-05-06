@@ -50,6 +50,22 @@
             <div id="level-grid" class="level-grid"></div>
             <div class="menu-options" role="group" aria-label="Опции">
               <div class="menu-options-title">Опции</div>
+              <div class="menu-player-row" role="radiogroup" aria-labelledby="menu-player-label">
+                <div id="menu-player-label" class="menu-player-label">Игроков на камере</div>
+                <div class="menu-player-segment">
+                  <label class="menu-player-pill">
+                    <input type="radio" name="ninja-players" id="opt-players-1" value="1" />
+                    <span>Один</span>
+                  </label>
+                  <label class="menu-player-pill">
+                    <input type="radio" name="ninja-players" id="opt-players-2" value="2" checked />
+                    <span>Два</span>
+                  </label>
+                </div>
+                <p class="menu-player-hint">
+                  «Два» — до двух поз (четыре «руки» для резов). «Один» — одна поза, меньше нагрузка на устройство.
+                </p>
+              </div>
               <label class="menu-option-toggle">
                 <input type="checkbox" id="opt-sound-off" class="menu-option-input" aria-label="Отключить звуки в игре" />
                 <span class="menu-option-left">

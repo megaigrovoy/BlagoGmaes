@@ -5,6 +5,15 @@ const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
 
 const STORAGE_SFX_OFF = 'neon-ninja-sfx-off';
 const STORAGE_MUSIC_OFF = 'neon-ninja-music-off';
+const STORAGE_PLAYER_COUNT = 'neon-ninja-player-count';
+
+function loadPlayerCountPreference() {
+    const raw = localStorage.getItem(STORAGE_PLAYER_COUNT);
+    return raw === '1' ? 1 : 2;
+}
+
+/** 1 или 2 — как numPoses у PoseLandmarker */
+let playerModeCount = loadPlayerCountPreference();
 
 /** Добавьте ?perf=1 к URL — в консоли раз в ~2.5 с среднее время кадра (поиск фризов на проде) */
 const DEBUG_FRAME_PERF =
@@ -365,6 +374,9 @@ const levelDisplay = document.getElementById('level-display');
 const btnBackMenu = document.getElementById('btn-back-menu');
 
 let poseLandmarker;
+let visionTasksResolver = null;
+let mediapipePoseDelegate = 'CPU';
+let currentPoseResults = null;
 let lastVideoTime = -1;
 let score = 0;
 let fruits = [];
@@ -514,6 +526,7 @@ mainMenu.addEventListener(
         if (isPlaying) return;
         tryUnlockAudioOnUserGesture();
         if (e.target?.closest?.('.level-btn')) return;
+        if (e.target?.closest?.('.menu-player-row')) return;
         if (e.target?.closest?.('.menu-options')) return;
         playMenuMusic();
     },
@@ -558,7 +571,78 @@ if (optMusicOff) {
         }
     });
 }
+
+const optPlayers1 = document.getElementById('opt-players-1');
+const optPlayers2 = document.getElementById('opt-players-2');
+
+function syncPlayerCountRadios() {
+    if (!optPlayers1 || !optPlayers2) return;
+    optPlayers1.checked = playerModeCount === 1;
+    optPlayers2.checked = playerModeCount === 2;
+}
+
+async function createPoseLandmarkerInstance() {
+    const vision = visionTasksResolver;
+    if (!vision) {
+        console.warn('[NeonNinjaCat] createPoseLandmarkerInstance: vision resolver not ready');
+        return;
+    }
+    const np = playerModeCount === 1 ? 1 : 2;
+    const poseOpts = (delegate) => ({
+        baseOptions: {
+            modelAssetPath:
+                'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
+            delegate
+        },
+        runningMode: 'VIDEO',
+        numPoses: np
+    });
+
+    try {
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts('GPU'));
+        mediapipePoseDelegate = 'GPU';
+    } catch (e) {
+        console.warn('PoseLandmarker GPU failed, using CPU:', e);
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts('CPU'));
+        mediapipePoseDelegate = 'CPU';
+    }
+
+    console.info(
+        `[MediaPipe] pose: ${mediapipePoseDelegate}, numPoses=${np} — если CPU, игра тяжелее; в DevTools отключите throttling.`
+    );
+}
+
+async function recreatePoseLandmarker() {
+    if (!visionTasksResolver) return;
+    if (poseLandmarker) {
+        try {
+            poseLandmarker.close();
+        } catch (_) {}
+        poseLandmarker = null;
+    }
+    lastVideoTime = -1;
+    currentPoseResults = null;
+    await createPoseLandmarkerInstance();
+}
+
+function applyPlayerModeFromUi(userInitiated) {
+    const next = optPlayers1?.checked ? 1 : 2;
+    if (userInitiated && next === playerModeCount) return;
+    playerModeCount = next;
+    localStorage.setItem(STORAGE_PLAYER_COUNT, String(playerModeCount));
+    syncPlayerCountRadios();
+    if (userInitiated) void recreatePoseLandmarker();
+}
+
+optPlayers1?.addEventListener('change', () => {
+    if (optPlayers1.checked) applyPlayerModeFromUi(true);
+});
+optPlayers2?.addEventListener('change', () => {
+    if (optPlayers2.checked) applyPlayerModeFromUi(true);
+});
+
 loadPersistedSettings();
+syncPlayerCountRadios();
 
 // Geometry configuration
 const POSE_CONNECTIONS = PoseLandmarker.POSE_CONNECTIONS;
@@ -721,9 +805,6 @@ async function setupWebcam() {
     throw lastErr ?? new Error("Could not open webcam");
 }
 
-/** В консоли видно, ушёл ли pose на CPU (тогда FPS падает сильно) */
-let mediapipePoseDelegate = 'CPU';
-
 async function initializeModels() {
     let vision;
     const wasmLocal = getMediapipeWasmUrl();
@@ -739,29 +820,8 @@ async function initializeModels() {
     }
     console.info(`[NeonNinjaCat] MediaPipe WASM: ${visionWasmSource} ← ${wasmLocal}`);
 
-    const poseOpts = (delegate) => ({
-        baseOptions: {
-            modelAssetPath:
-                "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
-            delegate
-        },
-        runningMode: "VIDEO",
-        /** Двое игроков: модель ищет до двух поз, каждая даёт свою пару кистей */
-        numPoses: 2
-    });
-
-    try {
-        poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts("GPU"));
-        mediapipePoseDelegate = 'GPU';
-    } catch (e) {
-        console.warn("PoseLandmarker GPU failed, using CPU:", e);
-        poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts("CPU"));
-        mediapipePoseDelegate = 'CPU';
-    }
-
-    console.info(
-        `[MediaPipe] pose: ${mediapipePoseDelegate} — если CPU, игра тяжелее; в DevTools отключите throttling.`
-    );
+    visionTasksResolver = vision;
+    await createPoseLandmarkerInstance();
 
     preloadGameAudio();
 
@@ -1344,7 +1404,6 @@ function appendSweepCollisionSegments(segments, a, b, maxStepPx = COLLISION_SUBS
 
 let lastSpawnTime = Date.now();
 let lastFrameTime = performance.now();
-let currentPoseResults = null;
 /** Previous-frame fingertip positions: Map<handKey, { 8: {x,y}, ... }> */
 let prevFingertipsByKey = new Map();
 /** Last time this hand key was present in MediaPipe results (performance.now) */
