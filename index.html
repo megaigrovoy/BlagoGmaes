@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -31,74 +31,117 @@
       <canvas id="game-canvas"></canvas>
       <div id="ui-layer">
         <div id="hud-game" class="hud-game is-hidden">
-          <h1 id="score-display">Score: 0</h1>
+          <h1 id="score-display"></h1>
           <div class="hud-row">
             <span id="level-display"></span>
           </div>
-          <button type="button" id="btn-back-menu" class="btn-menu btn-back-menu">Меню</button>
+          <button type="button" id="btn-back-menu" class="btn-menu btn-back-menu"></button>
         </div>
         <div id="main-menu" class="menu-overlay is-hidden">
-          <button type="button" id="btn-fullscreen" class="btn-fullscreen" aria-label="На весь экран" hidden>
-            <span class="btn-fullscreen-on" aria-hidden="true">⛶</span>
-            <span class="btn-fullscreen-off" aria-hidden="true">⛶</span>
-            <span class="btn-fullscreen-label">На весь экран</span>
-          </button>
-          <div class="menu-panel">
-            <img src="/src/assets/neoncat.webp" alt="NeonNinjaCat" class="menu-hero-img" width="480" height="480" />
-            <h2 class="menu-heading">Выберите уровень</h2>
-            <p class="menu-hint">Чем выше уровень, тем больше предметов одновременно на экране.</p>
-            <div id="level-grid" class="level-grid"></div>
-            <div class="menu-options" role="group" aria-label="Опции">
-              <div class="menu-options-title">Опции</div>
-              <div class="menu-player-row" role="radiogroup" aria-labelledby="menu-player-label">
-                <div id="menu-player-label" class="menu-player-label">Игроков на камере</div>
+          <div class="menu-fs-stack">
+            <button type="button" id="btn-fullscreen" class="btn-fullscreen" aria-label="" hidden>
+              <span class="btn-fullscreen-on" aria-hidden="true">⛶</span>
+              <span class="btn-fullscreen-off" aria-hidden="true">⛶</span>
+              <span class="btn-fullscreen-label"></span>
+            </button>
+            <div id="menu-quick-settings" class="menu-quick-settings" role="group" aria-label="">
+              <div class="menu-player-row menu-lang-row" role="radiogroup" aria-labelledby="menu-lang-label">
+                <div id="menu-lang-label" class="menu-player-label"></div>
                 <div class="menu-player-segment">
                   <label class="menu-player-pill">
-                    <input type="radio" name="ninja-players" id="opt-players-1" value="1" />
-                    <span>Один</span>
+                    <input type="radio" name="ninja-lang" id="opt-lang-ru" value="ru" checked />
+                    <span>Русский</span>
                   </label>
                   <label class="menu-player-pill">
-                    <input type="radio" name="ninja-players" id="opt-players-2" value="2" checked />
-                    <span>Два</span>
+                    <input type="radio" name="ninja-lang" id="opt-lang-en" value="en" />
+                    <span>English</span>
                   </label>
                 </div>
-                <p class="menu-player-hint">
-                  «Два» — до двух поз (четыре «руки» для резов). «Один» — одна поза, меньше нагрузка на устройство.
-                </p>
               </div>
-              <label class="menu-option-toggle">
-                <input type="checkbox" id="opt-sound-off" class="menu-option-input" aria-label="Отключить звуки в игре" />
-                <span class="menu-option-left">
-                  <span class="menu-option-emoji" aria-hidden="true">
-                    <span class="menu-option-emoji-on">🔊</span>
-                    <span class="menu-option-emoji-off">🔇</span>
+              <div class="menu-quick-audio">
+                <label class="menu-option-toggle menu-option-toggle--compact">
+                  <input type="checkbox" id="opt-sound-off" class="menu-option-input" aria-label="" />
+                  <span class="menu-option-left">
+                    <span class="menu-option-emoji" aria-hidden="true">
+                      <span class="menu-option-emoji-on">🔊</span>
+                      <span class="menu-option-emoji-off">🔇</span>
+                    </span>
+                    <span class="menu-option-text">
+                      <span id="menu-opt-sound-title" class="menu-option-title"></span>
+                    </span>
                   </span>
-                  <span class="menu-option-text">
-                    <span class="menu-option-title">Звуки в игре</span>
+                  <span class="menu-option-switch" aria-hidden="true"><span class="menu-option-knob"></span></span>
+                </label>
+                <label class="menu-option-toggle menu-option-toggle--compact">
+                  <input type="checkbox" id="opt-music-off" class="menu-option-input" aria-label="" />
+                  <span class="menu-option-left">
+                    <span class="menu-option-emoji" aria-hidden="true">
+                      <span class="menu-option-emoji-on">🎵</span>
+                      <span class="menu-option-emoji-off">🔇</span>
+                    </span>
+                    <span class="menu-option-text">
+                      <span id="menu-opt-music-title" class="menu-option-title"></span>
+                      <span id="menu-opt-music-desc" class="menu-option-desc"></span>
+                    </span>
                   </span>
-                </span>
-                <span class="menu-option-switch" aria-hidden="true"><span class="menu-option-knob"></span></span>
-              </label>
-              <label class="menu-option-toggle">
-                <input type="checkbox" id="opt-music-off" class="menu-option-input" aria-label="Отключить музыку" />
-                <span class="menu-option-left">
-                  <span class="menu-option-emoji" aria-hidden="true">
-                    <span class="menu-option-emoji-on">🎵</span>
-                    <span class="menu-option-emoji-off">🔇</span>
-                  </span>
-                  <span class="menu-option-text">
-                    <span class="menu-option-title">Музыка</span>
-                    <span class="menu-option-desc">Меню и игра</span>
-                  </span>
-                </span>
-                <span class="menu-option-switch" aria-hidden="true"><span class="menu-option-knob"></span></span>
-              </label>
+                  <span class="menu-option-switch" aria-hidden="true"><span class="menu-option-knob"></span></span>
+                </label>
+              </div>
+              <div class="menu-player-row" role="radiogroup" aria-labelledby="menu-player-label">
+                <div id="menu-player-label" class="menu-player-label"></div>
+                <div class="menu-player-segment">
+                  <label class="menu-player-pill menu-player-pill--icon" id="wrap-opt-players-1">
+                    <input type="radio" name="ninja-players" id="opt-players-1" value="1" />
+                    <span class="menu-player-pill-icon" aria-hidden="true">
+                      <svg class="menu-player-svg menu-player-svg--one" viewBox="0 0 44 52" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="22" cy="9" r="5.5" fill="currentColor" />
+                        <g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round">
+                          <path d="M22 15.5v13" />
+                          <path d="M22 17.5L9 4.5" />
+                          <path d="M22 17.5L35 4.5" />
+                          <path d="M22 28.5L15.5 46.5" />
+                          <path d="M22 28.5L28.5 46.5" />
+                        </g>
+                      </svg>
+                    </span>
+                  </label>
+                  <label class="menu-player-pill menu-player-pill--icon" id="wrap-opt-players-2">
+                    <input type="radio" name="ninja-players" id="opt-players-2" value="2" checked />
+                    <span class="menu-player-pill-icon" aria-hidden="true">
+                      <svg class="menu-player-svg menu-player-svg--two" viewBox="0 0 96 52" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="23" cy="9" r="5" fill="currentColor" />
+                        <g fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round">
+                          <path d="M23 15v11" />
+                          <path d="M23 17L11 5" />
+                          <path d="M23 17L35 5" />
+                          <path d="M23 26L17 44" />
+                          <path d="M23 26L29 44" />
+                        </g>
+                        <circle cx="71" cy="9" r="5" fill="currentColor" />
+                        <g fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round">
+                          <path d="M71 15v11" />
+                          <path d="M71 17L59 5" />
+                          <path d="M71 17L83 5" />
+                          <path d="M71 26L65 44" />
+                          <path d="M71 26L77 44" />
+                        </g>
+                      </svg>
+                    </span>
+                  </label>
+                </div>
+              </div>
             </div>
+          </div>
+          <div class="menu-panel">
+            <img src="/src/assets/neoncat.webp" alt="NeonNinjaCat" class="menu-hero-img" width="480" height="480" />
+            <h2 id="menu-heading" class="menu-heading"></h2>
+            <p id="menu-hint" class="menu-hint"></p>
+            <div id="level-grid" class="level-grid"></div>
           </div>
         </div>
         <div id="loading" class="visible">
           <img src="/src/assets/neoncat.webp" alt="Neon Cat" id="loading-image" />
-          <div id="loading-text">Loading Models...</div>
+          <div id="loading-text"></div>
           <div id="progress-container">
             <div id="progress-bar"></div>
           </div>

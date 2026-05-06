@@ -6,11 +6,20 @@ const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
 const STORAGE_SFX_OFF = 'neon-ninja-sfx-off';
 const STORAGE_MUSIC_OFF = 'neon-ninja-music-off';
 const STORAGE_PLAYER_COUNT = 'neon-ninja-player-count';
+const STORAGE_UI_LANG = 'neon-ninja-ui-lang';
+
+function loadUiLangPreference() {
+    const raw = localStorage.getItem(STORAGE_UI_LANG);
+    return raw === 'en' ? 'en' : 'ru';
+}
 
 function loadPlayerCountPreference() {
     const raw = localStorage.getItem(STORAGE_PLAYER_COUNT);
     return raw === '1' ? 1 : 2;
 }
+
+/** ru | en — сохраняется в localStorage при переключении языка */
+let uiLang = loadUiLangPreference();
 
 /** 1 или 2 — как numPoses у PoseLandmarker */
 let playerModeCount = loadPlayerCountPreference();
@@ -47,12 +56,25 @@ const sliceSoundUrlByEmoji = {
     '🍅': new URL('./src/assets/sounds/Sound Of Fruit Slice 3.mp3', import.meta.url).href
 };
 
+const SLICE_SFX_FALLBACK_POOL = [...new Set(Object.values(sliceSoundUrlByEmoji))].filter(Boolean);
+let sliceSfxRot = 0;
+
+function playSliceSoundForTarget(fruit) {
+    if (fruit.levelMode === 'fruit' && fruit.emoji && sliceSoundUrlByEmoji[fruit.emoji]) {
+        playSliceSound(fruit.emoji);
+        return;
+    }
+    if (!SLICE_SFX_FALLBACK_POOL.length) return;
+    const url = SLICE_SFX_FALLBACK_POOL[sliceSfxRot++ % SLICE_SFX_FALLBACK_POOL.length];
+    playOneShotSfx(url, 0.88);
+}
+
 function playSliceSound(emoji) {
     if (!soundEffectsEnabled) return;
     playOneShotSfx(sliceSoundUrlByEmoji[emoji], 0.88);
 }
 
-/** Голос, проговаривающий название продукта при его появлении (вылете) */
+/** Голос при вылете продукта: ru — stuff/*.MP3; en — «stuff en»/*.MP3 (см. стемы и fallback ниже) */
 const spawnVoiceUrlByEmoji = {
     '🍌': new URL('./src/assets/sounds/stuff/banana.MP3', import.meta.url).href,
     '🍎': new URL('./src/assets/sounds/stuff/apple.MP3', import.meta.url).href,
@@ -66,9 +88,134 @@ const spawnVoiceUrlByEmoji = {
     '🍅': new URL('./src/assets/sounds/stuff/tomat.MP3', import.meta.url).href
 };
 
+/** Совпадает с именами в stuff/*.MP3 — для «stuff en» подбирается файл по стему / fallback */
+const SPAWN_VOICE_STEM_BY_EMOJI = {
+    '🍌': 'banana',
+    '🍎': 'apple',
+    '🍉': 'watermelon',
+    '🍊': 'orange',
+    '🍗': 'chicken',
+    '🥩': 'meat',
+    '🥦': 'broccoli',
+    '🥬': 'cabbage',
+    '🍆': 'eggplant',
+    '🍅': 'tomat'
+};
+
+/** Если в «stuff en» другое имя файла (tomato вместо tomat, steak вместо meat) */
+const SPAWN_VOICE_EN_STEM_FALLBACK = {
+    tomat: 'tomato',
+    meat: 'steak'
+};
+
+const enSpawnVoiceUrlByStem = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/sounds/stuff en/*.MP3', {
+            eager: true,
+            query: '?url',
+            import: 'default'
+        })
+    ).map(([path, href]) => {
+        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
+        return [file.toLowerCase(), href];
+    })
+);
+
+function spawnVoiceUrlResolve(emoji) {
+    const ruUrl = spawnVoiceUrlByEmoji[emoji];
+    if (uiLang !== 'en') return ruUrl;
+    const stem = SPAWN_VOICE_STEM_BY_EMOJI[emoji];
+    if (!stem) return ruUrl;
+    const low = stem.toLowerCase();
+    let url = enSpawnVoiceUrlByStem[low];
+    if (!url) {
+        const alt = SPAWN_VOICE_EN_STEM_FALLBACK[low];
+        if (alt) url = enSpawnVoiceUrlByStem[alt.toLowerCase()];
+    }
+    return url || ruUrl;
+}
+
+/** Имя файла = строчная кириллица (а.MP3 … я.MP3); ключ — lowercase для lookup с буквы алфавита UI */
+const ruLetterSpawnUrlByLower = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/sounds/letters/ru/*.MP3', {
+            eager: true,
+            query: '?url',
+            import: 'default'
+        })
+    ).map(([path, href]) => {
+        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
+        return [file.toLowerCase(), href];
+    })
+);
+
+/** Латиница a.MP3 … z.MP3 для английского UI */
+const enLetterSpawnUrlByLower = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/sounds/letters/en/*.MP3', {
+            eager: true,
+            query: '?url',
+            import: 'default'
+        })
+    ).map(([path, href]) => {
+        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
+        return [file.toLowerCase(), href];
+    })
+);
+
+/** Имя файла = число 1 … 10 (.MP3); ключ строкой для совпадения с label */
+const ruNumberSpawnUrlByKey = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/sounds/numbers/ru/*.MP3', {
+            eager: true,
+            query: '?url',
+            import: 'default'
+        })
+    ).map(([path, href]) => {
+        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
+        return [file, href];
+    })
+);
+
+const enNumberSpawnUrlByKey = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/sounds/numbers/en/*.MP3', {
+            eager: true,
+            query: '?url',
+            import: 'default'
+        })
+    ).map(([path, href]) => {
+        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
+        return [file, href];
+    })
+);
+
+/** Числовые уровни: по кругу только 1 … NUMBER_SPAWN_CYCLE_MAX (озвучка — sounds/numbers/ru|en) */
+const NUMBER_SPAWN_CYCLE_MAX = 10;
+
 function playSpawnVoice(emoji) {
     if (!soundEffectsEnabled) return;
-    const url = spawnVoiceUrlByEmoji[emoji];
+    const url = spawnVoiceUrlResolve(emoji);
+    if (!url) return;
+    playOneShotSfx(url, 0.95);
+}
+
+/** Озвучка буквы при появлении — ru/en по языку UI (папки sounds/letters/ru|en) */
+function playLetterSpawnSound(char) {
+    if (!soundEffectsEnabled || !char) return;
+    const key = char.toLowerCase();
+    const url =
+        uiLang === 'ru' ? ruLetterSpawnUrlByLower[key] : uiLang === 'en' ? enLetterSpawnUrlByLower[key] : null;
+    if (!url) return;
+    playOneShotSfx(url, 0.95);
+}
+
+/** Озвучка цифры при появлении — ru/en (файлы 1.MP3 … 10.MP3) */
+function playNumberSpawnSound(n) {
+    if (!soundEffectsEnabled || !Number.isFinite(n)) return;
+    const key = String(Math.floor(n));
+    const url =
+        uiLang === 'ru' ? ruNumberSpawnUrlByKey[key] : uiLang === 'en' ? enNumberSpawnUrlByKey[key] : null;
     if (!url) return;
     playOneShotSfx(url, 0.95);
 }
@@ -196,7 +343,12 @@ function warmSfxAudioBuffersYielding() {
     const sfxOnly = [
         ...new Set([
             ...Object.values(sliceSoundUrlByEmoji),
-            ...Object.values(spawnVoiceUrlByEmoji)
+            ...Object.values(spawnVoiceUrlByEmoji),
+            ...Object.values(enSpawnVoiceUrlByStem),
+            ...Object.values(ruLetterSpawnUrlByLower),
+            ...Object.values(enLetterSpawnUrlByLower),
+            ...Object.values(ruNumberSpawnUrlByKey),
+            ...Object.values(enNumberSpawnUrlByKey)
         ])
     ].filter(Boolean);
     void (async () => {
@@ -215,7 +367,12 @@ function preloadGameAudio() {
         const sfxUrls = [
             ...new Set([
                 ...Object.values(sliceSoundUrlByEmoji),
-                ...Object.values(spawnVoiceUrlByEmoji)
+                ...Object.values(spawnVoiceUrlByEmoji),
+                ...Object.values(enSpawnVoiceUrlByStem),
+                ...Object.values(ruLetterSpawnUrlByLower),
+                ...Object.values(enLetterSpawnUrlByLower),
+                ...Object.values(ruNumberSpawnUrlByKey),
+                ...Object.values(enNumberSpawnUrlByKey)
             ])
         ].filter(Boolean);
         for (const u of sfxUrls) preloadHtmlAudioUrl(u);
@@ -383,15 +540,19 @@ let fruits = [];
 let particles = [];
 let isPlaying = false;
 
-/** maxConcurrent = unsliced fruits cap; spawnIntervalMs = try spawn at most this often */
+/** mode: fruit — эмодзи; letter — кириллица или латиница по языку UI; number — целые 1–10 по кругу */
 const LEVELS = [
-    { maxConcurrent: 1, spawnIntervalMs: 2200 },
-    { maxConcurrent: 2, spawnIntervalMs: 1900 },
-    { maxConcurrent: 3, spawnIntervalMs: 1550 },
-    { maxConcurrent: 4, spawnIntervalMs: 1250 },
-    { maxConcurrent: 5, spawnIntervalMs: 1050 },
-    { maxConcurrent: 6, spawnIntervalMs: 950 }
+    { mode: 'fruit', maxConcurrent: 1, spawnIntervalMs: 2200 },
+    { mode: 'fruit', maxConcurrent: 2, spawnIntervalMs: 1900 },
+    { mode: 'fruit', maxConcurrent: 3, spawnIntervalMs: 1550 },
+    { mode: 'letter', maxConcurrent: 1, spawnIntervalMs: 2200 },
+    { mode: 'letter', maxConcurrent: 2, spawnIntervalMs: 1900 },
+    { mode: 'letter', maxConcurrent: 3, spawnIntervalMs: 1550 },
+    { mode: 'number', maxConcurrent: 1, spawnIntervalMs: 2200 },
+    { mode: 'number', maxConcurrent: 2, spawnIntervalMs: 1900 },
+    { mode: 'number', maxConcurrent: 3, spawnIntervalMs: 1550 }
 ];
+
 /** Кадров подряд без пересечения с предметом, чтобы снова считать «новый вход» (трекинг мерцает на границе круга) */
 const CONTACT_EXIT_DEBOUNCE_FRAMES = 7;
 /** Штраф за предмет, улетевший вниз несрезанным (симметрично +10 за рез) */
@@ -402,13 +563,174 @@ function getCurrentLevelConfig() {
     return LEVELS[currentLevelIndex];
 }
 
-function pluralObjectsRu(n) {
+const I18N = {
+    ru: {
+        tierProducts: 'Продукты',
+        tierLetters: 'Буквы',
+        tierNumbers: 'Цифры',
+        hudAtOnce: '',
+        scorePrefix: 'Счёт: ',
+        menuHeading: 'Выберите уровень',
+        menuHint: 'Чем выше уровень в категории (1→3), тем больше предметов одновременно на экране.',
+        quickSettingsAria: 'Язык, звук, музыка и число игроков',
+        langLabel: 'Язык',
+        playersOnCamera: 'Количество игроков',
+        playersOneAria: 'Один игрок',
+        playersTwoAria: 'Два игрока',
+        soundInGame: 'Звуки в игре',
+        soundOffAria: 'Отключить звуки в игре',
+        musicTitle: 'Музыка',
+        musicDesc: 'Меню и игра',
+        musicOffAria: 'Отключить музыку',
+        fullscreenEnter: 'На весь экран',
+        fullscreenExit: 'Свернуть',
+        fullscreenEnterAria: 'Развернуть на весь экран',
+        fullscreenExitAria: 'Выйти из полноэкранного режима',
+        backToMenu: 'Меню',
+        loadingModels: 'Загрузка моделей…',
+        errorTitle: 'Не удалось запустить игру.',
+        errorHintGeneric:
+            'Откройте консоль браузера (F12 → Console) и при необходимости пришлите текст ошибки.',
+        errorHintCameraBlocked:
+            'Браузер заблокировал камеру для этого сайта. Нажмите на значок замка слева от адреса → разрешите камеру, обновите страницу.',
+        errorHintNoCamera:
+            'Камера не найдена. Проверьте, что она подключена и не занята другим приложением.',
+        errorHintTimeout:
+            'Камера не успела запуститься. Отключите режим эмуляции устройства в DevTools (или выберите реальное устройство с камерой), закройте другие программы, использующие камеру, и обновите страницу.'
+    },
+    en: {
+        tierProducts: 'Products',
+        tierLetters: 'Letters',
+        tierNumbers: 'Numbers',
+        hudAtOnce: 'at once',
+        scorePrefix: 'Score: ',
+        menuHeading: 'Choose a level',
+        menuHint: 'Within each category (1→3), higher tiers mean more objects at once.',
+        quickSettingsAria: 'Language, sound, music and number of players',
+        langLabel: 'Language',
+        playersOnCamera: 'Number of players',
+        playersOneAria: 'One player',
+        playersTwoAria: 'Two players',
+        soundInGame: 'Game sounds',
+        soundOffAria: 'Mute game sounds',
+        musicTitle: 'Music',
+        musicDesc: 'Menu and game',
+        musicOffAria: 'Mute music',
+        fullscreenEnter: 'Fullscreen',
+        fullscreenExit: 'Exit fullscreen',
+        fullscreenEnterAria: 'Enter fullscreen',
+        fullscreenExitAria: 'Exit fullscreen',
+        backToMenu: 'Menu',
+        loadingModels: 'Loading models…',
+        errorTitle: 'Could not start the game.',
+        errorHintGeneric: 'Open the browser console (F12 → Console) and send the error text if needed.',
+        errorHintCameraBlocked:
+            'The browser blocked camera access for this site. Use the lock icon next to the address bar → allow camera, then refresh.',
+        errorHintNoCamera: 'No camera found. Check that it is connected and not used by another app.',
+        errorHintTimeout:
+            'The camera did not start in time. Turn off device emulation in DevTools (or pick a real camera), close other apps using the camera, and refresh.'
+    }
+};
+
+function t(key) {
+    const pack = I18N[uiLang];
+    if (pack && Object.prototype.hasOwnProperty.call(pack, key)) return pack[key];
+    return I18N.en[key] ?? key;
+}
+
+function pluralSimultaneousRu(n) {
     const n100 = n % 100;
     const n10 = n % 10;
     if (n100 >= 11 && n100 <= 14) return `${n} объектов`;
     if (n10 === 1) return `${n} объект`;
     if (n10 >= 2 && n10 <= 4) return `${n} объекта`;
     return `${n} объектов`;
+}
+
+function pluralSimultaneousEn(n) {
+    return n === 1 ? `${n} object` : `${n} objects`;
+}
+
+function levelTierTitle(levelIndex) {
+    const sub = (levelIndex % 3) + 1;
+    if (levelIndex < 3) return `${t('tierProducts')} ${sub}`;
+    if (levelIndex < 6) return `${t('tierLetters')} ${sub}`;
+    return `${t('tierNumbers')} ${sub}`;
+}
+
+function formatHudLevelLine(levelIndex, maxConcurrent) {
+    const title = levelTierTitle(levelIndex);
+    if (uiLang === 'en') {
+        return `${title} · ${pluralSimultaneousEn(maxConcurrent)} ${t('hudAtOnce')}`.trim();
+    }
+    return `${title} · одновременно ${pluralSimultaneousRu(maxConcurrent)}`;
+}
+
+function formatScore(n) {
+    return `${t('scorePrefix')}${n}`;
+}
+
+function buildLevelGrid() {
+    if (!levelGrid) return;
+    levelGrid.innerHTML = '';
+    LEVELS.forEach((cfg, i) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'level-btn';
+        btn.innerHTML = `<span class="level-title">${levelTierTitle(i)}</span>`;
+        btn.addEventListener('click', () => startLevel(i));
+        levelGrid.appendChild(btn);
+    });
+}
+
+function setUiLang(lang) {
+    if (lang !== 'ru' && lang !== 'en') return;
+    uiLang = lang;
+    localStorage.setItem(STORAGE_UI_LANG, lang);
+    document.documentElement.lang = lang;
+    applyUiTranslations();
+}
+
+function applyUiTranslations() {
+    const mh = document.getElementById('menu-heading');
+    if (mh) mh.textContent = t('menuHeading');
+    const hint = document.getElementById('menu-hint');
+    if (hint) hint.textContent = t('menuHint');
+    const mq = document.getElementById('menu-quick-settings');
+    if (mq) mq.setAttribute('aria-label', t('quickSettingsAria'));
+    const ml = document.getElementById('menu-lang-label');
+    if (ml) ml.textContent = t('langLabel');
+    const mpl = document.getElementById('menu-player-label');
+    if (mpl) mpl.textContent = t('playersOnCamera');
+    const wpl = document.getElementById('wrap-opt-players-1');
+    const wpr = document.getElementById('wrap-opt-players-2');
+    if (wpl) wpl.setAttribute('aria-label', t('playersOneAria'));
+    if (wpr) wpr.setAttribute('aria-label', t('playersTwoAria'));
+    const st = document.getElementById('menu-opt-sound-title');
+    if (st) st.textContent = t('soundInGame');
+    const mt = document.getElementById('menu-opt-music-title');
+    if (mt) mt.textContent = t('musicTitle');
+    const md = document.getElementById('menu-opt-music-desc');
+    if (md) md.textContent = t('musicDesc');
+    const sfx = document.getElementById('opt-sound-off');
+    if (sfx) sfx.setAttribute('aria-label', t('soundOffAria'));
+    const mus = document.getElementById('opt-music-off');
+    if (mus) mus.setAttribute('aria-label', t('musicOffAria'));
+    const lt = document.getElementById('loading-text');
+    if (lt) lt.textContent = t('loadingModels');
+    if (btnBackMenu) btnBackMenu.textContent = t('backToMenu');
+    const olru = document.getElementById('opt-lang-ru');
+    const olen = document.getElementById('opt-lang-en');
+    if (olru) olru.checked = uiLang === 'ru';
+    if (olen) olen.checked = uiLang === 'en';
+    syncFullscreenButton();
+    buildLevelGrid();
+    if (scoreDisplay) scoreDisplay.innerText = formatScore(isPlaying ? score : 0);
+    if (isPlaying) {
+        const cfg = getCurrentLevelConfig();
+        if (levelDisplay) levelDisplay.textContent = formatHudLevelLine(currentLevelIndex, cfg.maxConcurrent);
+        if (scoreDisplay) scoreDisplay.innerText = formatScore(score);
+    }
 }
 
 function showMainMenu() {
@@ -434,10 +756,12 @@ function startLevel(levelIndex) {
     currentLevelIndex = Math.max(0, Math.min(LEVELS.length - 1, levelIndex));
     const cfg = getCurrentLevelConfig();
     score = 0;
-    scoreDisplay.innerText = `Score: ${score}`;
-    levelDisplay.textContent = `Уровень ${currentLevelIndex + 1} · одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
+    scoreDisplay.innerText = formatScore(score);
+    levelDisplay.textContent = formatHudLevelLine(currentLevelIndex, cfg.maxConcurrent);
     fruits.length = 0;
     particles.length = 0;
+    if (cfg.mode === 'number') sequentialSpawnNumber = 1;
+    if (cfg.mode === 'letter') sequentialLetterIndex = 0;
     lastSpawnTime = Date.now();
     lastFrameTime = performance.now();
     mainMenu.classList.add('is-hidden');
@@ -451,16 +775,6 @@ function startLevel(levelIndex) {
         requestAnimationFrame(gameLoop);
     });
 }
-
-LEVELS.forEach((cfg, i) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'level-btn';
-    const sub = `одновременно ${pluralObjectsRu(cfg.maxConcurrent)}`;
-    btn.innerHTML = `<span class="level-title">Уровень ${i + 1}</span><span class="level-sub">${sub}</span>`;
-    btn.addEventListener('click', () => startLevel(i));
-    levelGrid.appendChild(btn);
-});
 
 btnBackMenu.addEventListener('click', () => showMainMenu());
 
@@ -505,7 +819,10 @@ function syncFullscreenButton() {
     if (!btnFullscreen) return;
     const isFs = !!getCurrentFullscreenElement();
     btnFullscreen.classList.toggle('is-active', isFs);
-    if (btnFullscreenLabel) btnFullscreenLabel.textContent = isFs ? 'Свернуть' : 'На весь экран';
+    if (btnFullscreenLabel) {
+        btnFullscreenLabel.textContent = isFs ? t('fullscreenExit') : t('fullscreenEnter');
+    }
+    btnFullscreen.setAttribute('aria-label', isFs ? t('fullscreenExitAria') : t('fullscreenEnterAria'));
 }
 
 if (btnFullscreen) {
@@ -525,9 +842,9 @@ mainMenu.addEventListener(
     (e) => {
         if (isPlaying) return;
         tryUnlockAudioOnUserGesture();
+        if (e.target?.closest?.('.menu-fs-stack')) return;
         if (e.target?.closest?.('.level-btn')) return;
         if (e.target?.closest?.('.menu-player-row')) return;
-        if (e.target?.closest?.('.menu-options')) return;
         playMenuMusic();
     },
     { capture: true }
@@ -641,8 +958,18 @@ optPlayers2?.addEventListener('change', () => {
     if (optPlayers2.checked) applyPlayerModeFromUi(true);
 });
 
+const optLangRu = document.getElementById('opt-lang-ru');
+const optLangEn = document.getElementById('opt-lang-en');
+optLangRu?.addEventListener('change', () => {
+    if (optLangRu.checked) setUiLang('ru');
+});
+optLangEn?.addEventListener('change', () => {
+    if (optLangEn.checked) setUiLang('en');
+});
+
 loadPersistedSettings();
 syncPlayerCountRadios();
+applyUiTranslations();
 
 // Geometry configuration
 const POSE_CONNECTIONS = PoseLandmarker.POSE_CONNECTIONS;
@@ -849,9 +1176,71 @@ function initFruitTextures() {
 }
 initFruitTextures();
 
+/** Русский алфавит для уровней 4–6 (озвучка при вылете — sounds/letters/ru) */
+const CYRILLIC_LETTERS = [
+    'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П',
+    'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', 'Э', 'Ю', 'Я'
+];
+
+/** Латиница для буквенных уровней при английском UI */
+const LATIN_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
+
+function letterAlphabetForUiLang() {
+    return uiLang === 'en' ? LATIN_LETTERS : CYRILLIC_LETTERS;
+}
+
+const GLYPH_NEON_COLORS = [
+    '#ffe135', '#ff0800', '#fc3a52', '#ffa500', '#ffcc80', '#76ff03', '#00e5ff',
+    '#651fff', '#ff00ea', '#00f3ff', '#e53935', '#8bc34a', '#9c27b0'
+];
+
+const glyphTextureCache = new Map();
+
+function glyphFontPx(label, canvasSize) {
+    const len = label.length;
+    if (len >= 3) return canvasSize * 0.34;
+    if (len === 2) return canvasSize * 0.42;
+    return canvasSize * 0.52;
+}
+
+/** Числовые уровни: следующее число по порядку 1 → NUMBER_SPAWN_CYCLE_MAX → 1 … */
+let sequentialSpawnNumber = 1;
+/** Буквенные уровни: следующая буква по алфавиту (кириллица или A–Z по языку UI) */
+let sequentialLetterIndex = 0;
+
+/** Буквы и цифры: только небольшой наклон и лёгкое качание (без полного оборота и «нечитаемых» углов) */
+const GLYPH_MAX_TILT_RAD = (14 * Math.PI) / 180;
+const GLYPH_ROT_SPEED_RANGE = 0.008;
+
+function getOrCreateGlyphTexture(cacheKey, label, color) {
+    let hit = glyphTextureCache.get(cacheKey);
+    if (hit) return hit;
+    const size = 600;
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const ctx = c.getContext('2d');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const fp = glyphFontPx(label, size);
+    ctx.font = `900 ${fp}px "Outfit", "Segoe UI", system-ui, sans-serif`;
+    ctx.fillStyle = color;
+    ctx.strokeStyle = 'rgba(0,0,0,0.38)';
+    ctx.lineWidth = Math.max(3, size * 0.012);
+    const dy = 10;
+    ctx.strokeText(label, size / 2, size / 2 + dy);
+    ctx.fillText(label, size / 2, size / 2 + dy);
+    hit = { canvas: c, size };
+    glyphTextureCache.set(cacheKey, hit);
+    return hit;
+}
+
 class Fruit {
     constructor() {
         const { w, h, minSide } = gameLayout;
+        const levelCfg = getCurrentLevelConfig();
+        this.levelMode = levelCfg.mode || 'fruit';
+
         this.x = Math.random() * w * 0.8 + w * 0.1;
         this.y = h + 50;
         const span = Math.min(w, h * 1.35);
@@ -864,22 +1253,45 @@ class Fruit {
         const rLo = minSide * 0.068;
         const rHi = minSide * 0.108;
         this.radius = Math.min(160, Math.max(36, rLo + Math.random() * (rHi - rLo)));
-        
-        const fruitTypes = [
-            { emoji: '🍌', color: '#ffe135' }, // Banana yellow
-            { emoji: '🍎', color: '#ff0800' }, // Apple red
-            { emoji: '🍉', color: '#fc3a52' }, // Watermelon pink/red
-            { emoji: '🍊', color: '#ffa500' }, // Orange
-            { emoji: '🍗', color: '#ffcc80' }, // Chicken leg beige
-            { emoji: '🥩', color: '#d32f2f' }, // Steak red
-            { emoji: '🥦', color: '#4caf50' }, // Broccoli green
-            { emoji: '🥬', color: '#8bc34a' }, // Cabbage light green
-            { emoji: '🍆', color: '#9c27b0' }, // Eggplant purple
-            { emoji: '🍅', color: '#e53935' }  // Tomato red
-        ];
-        const type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
-        this.emoji = type.emoji;
-        this.color = type.color;
+
+        if (this.levelMode === 'fruit') {
+            const fruitTypes = [
+                { emoji: '🍌', color: '#ffe135' }, // Banana yellow
+                { emoji: '🍎', color: '#ff0800' }, // Apple red
+                { emoji: '🍉', color: '#fc3a52' }, // Watermelon pink/red
+                { emoji: '🍊', color: '#ffa500' }, // Orange
+                { emoji: '🍗', color: '#ffcc80' }, // Chicken leg beige
+                { emoji: '🥩', color: '#d32f2f' }, // Steak red
+                { emoji: '🥦', color: '#4caf50' }, // Broccoli green
+                { emoji: '🥬', color: '#8bc34a' }, // Cabbage light green
+                { emoji: '🍆', color: '#9c27b0' }, // Eggplant purple
+                { emoji: '🍅', color: '#e53935' }  // Tomato red
+            ];
+            const type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
+            this.emoji = type.emoji;
+            this.color = type.color;
+            this.textureRef = fruitEmojiTextures[this.emoji];
+            playSpawnVoice(this.emoji);
+        } else if (this.levelMode === 'letter') {
+            this.emoji = null;
+            const alphabet = letterAlphabetForUiLang();
+            const ch = alphabet[sequentialLetterIndex];
+            sequentialLetterIndex = (sequentialLetterIndex + 1) % alphabet.length;
+            this.color = GLYPH_NEON_COLORS[Math.floor(Math.random() * GLYPH_NEON_COLORS.length)];
+            const cacheKey = `ltr:${ch}:${this.color}`;
+            this.textureRef = getOrCreateGlyphTexture(cacheKey, ch, this.color);
+            playLetterSpawnSound(ch);
+        } else {
+            this.emoji = null;
+            const n = sequentialSpawnNumber;
+            sequentialSpawnNumber =
+                sequentialSpawnNumber >= NUMBER_SPAWN_CYCLE_MAX ? 1 : sequentialSpawnNumber + 1;
+            const label = String(n);
+            this.color = GLYPH_NEON_COLORS[Math.floor(Math.random() * GLYPH_NEON_COLORS.length)];
+            const cacheKey = `num:${n}:${this.color}`;
+            this.textureRef = getOrCreateGlyphTexture(cacheKey, label, this.color);
+            playNumberSpawnSound(n);
+        }
 
         this.isSliced = false;
         this.sliceOffsetX = 0;
@@ -889,16 +1301,19 @@ class Fruit {
         /** Сколько кадров подряд нет пересечения (сброс _wasTouchingHand только после дебаунса) */
         this._noContactFrames = 0;
 
-        this.rotation = Math.random() * Math.PI * 2;
-        this.rotationSpeed = (Math.random() - 0.5) * 0.1; // Random spin speed
-        
+        if (this.levelMode === 'fruit') {
+            this.rotation = Math.random() * Math.PI * 2;
+            this.rotationSpeed = (Math.random() - 0.5) * 0.1;
+        } else {
+            this.rotation = (Math.random() * 2 - 1) * GLYPH_MAX_TILT_RAD * 0.9;
+            this.rotationSpeed = (Math.random() * 2 - 1) * GLYPH_ROT_SPEED_RANGE;
+        }
+
         this.cutAngle = 0;
         this.rot1 = 0;
         this.rot2 = 0;
         this.rotSpeed1 = 0;
         this.rotSpeed2 = 0;
-
-        playSpawnVoice(this.emoji);
     }
 
     update(dt = 1) {
@@ -910,6 +1325,15 @@ class Fruit {
 
         if (!this.isSliced) {
             this.rotation += this.rotationSpeed * dt;
+            if (this.levelMode !== 'fruit') {
+                if (this.rotation > GLYPH_MAX_TILT_RAD) {
+                    this.rotation = GLYPH_MAX_TILT_RAD;
+                    this.rotationSpeed = -Math.abs(this.rotationSpeed);
+                } else if (this.rotation < -GLYPH_MAX_TILT_RAD) {
+                    this.rotation = -GLYPH_MAX_TILT_RAD;
+                    this.rotationSpeed = Math.abs(this.rotationSpeed);
+                }
+            }
         } else {
             this.sliceOffsetX += 6 * dt;
             this.rot1 += this.rotSpeed1 * dt;
@@ -920,9 +1344,12 @@ class Fruit {
     draw(ctx) {
         ctx.save();
         ctx.translate(this.x, this.y);
-        
-        const texture = fruitEmojiTextures[this.emoji].canvas;
-        const texSize = fruitEmojiTextures[this.emoji].size;
+        /** Canvas на экране зеркалится через CSS scaleX(-1) — компенсируем только текст/буквы, чтобы читалось нормально */
+        const compensateCssMirror = this.levelMode !== 'fruit';
+        if (compensateCssMirror) ctx.scale(-1, 1);
+
+        const texture = this.textureRef.canvas;
+        const texSize = this.textureRef.size;
         const drawSize = this.radius * 2;
         
         if (!this.isSliced) {
@@ -1783,12 +2210,17 @@ function gameLoop(nowTime) {
                 fruit.cutAngle = fruit.rotation;
                 fruit.rot1 = fruit.rotation;
                 fruit.rot2 = fruit.rotation;
-                fruit.rotSpeed1 = fruit.rotationSpeed - 0.05;
-                fruit.rotSpeed2 = fruit.rotationSpeed + 0.05;
+                if (fruit.levelMode === 'fruit') {
+                    fruit.rotSpeed1 = fruit.rotationSpeed - 0.05;
+                    fruit.rotSpeed2 = fruit.rotationSpeed + 0.05;
+                } else {
+                    fruit.rotSpeed1 = fruit.rotationSpeed - 0.014;
+                    fruit.rotSpeed2 = fruit.rotationSpeed + 0.014;
+                }
 
                 score += 10;
-                scoreDisplay.innerText = `Score: ${score}`;
-                playSliceSound(fruit.emoji);
+                scoreDisplay.innerText = formatScore(score);
+                playSliceSoundForTarget(fruit);
 
                 particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
                 for (let p = 0; p < 26; p++) {
@@ -1804,7 +2236,7 @@ function gameLoop(nowTime) {
         if (fruit.y > gameLayout.h + 100) {
             if (!fruit.isSliced) {
                 score = Math.max(0, score - MISS_PENALTY);
-                scoreDisplay.innerText = `Score: ${score}`;
+                scoreDisplay.innerText = formatScore(score);
             }
             fruits.splice(i, 1);
         }
@@ -1841,28 +2273,25 @@ function showStartError(e) {
     console.error(e);
     const name = e?.name || "";
     const msg = e?.message || String(e);
-    let hint =
-        "Откройте консоль браузера (F12 → Console) и при необходимости пришлите текст ошибки.";
+    let hint = t("errorHintGeneric");
     if (name === "NotAllowedError" || /Permission/i.test(msg)) {
-        hint =
-            "Браузер заблокировал камеру для этого сайта. Нажмите на значок замка слева от адреса → разрешите камеру, обновите страницу.";
+        hint = t("errorHintCameraBlocked");
     } else if (name === "NotFoundError" || /DevicesNotFound/i.test(msg)) {
-        hint = "Камера не найдена. Проверьте, что она подключена и не занята другим приложением.";
+        hint = t("errorHintNoCamera");
     } else if (
         name === "AbortError" ||
         /Timeout starting video source|metadata timeout/i.test(msg)
     ) {
-        hint =
-            "Камера не успела запуститься. Отключите режим эмуляции устройства в DevTools (или выберите реальное устройство с камерой), закройте другие программы, использующие камеру, и обновите страницу.";
+        hint = t("errorHintTimeout");
     }
     loadingElement.innerHTML = "";
     const wrap = document.createElement("div");
     wrap.style.cssText = "max-width:28rem;margin:0 auto;text-align:left;line-height:1.45;font-size:0.95rem;";
-    const t = document.createElement("p");
-    t.textContent = "Не удалось запустить игру.";
-    t.style.fontWeight = "700";
-    t.style.marginBottom = "0.5rem";
-    wrap.appendChild(t);
+    const titleP = document.createElement("p");
+    titleP.textContent = t("errorTitle");
+    titleP.style.fontWeight = "700";
+    titleP.style.marginBottom = "0.5rem";
+    wrap.appendChild(titleP);
     const d = document.createElement("p");
     d.style.opacity = "0.9";
     d.style.fontSize = "0.85rem";
