@@ -1196,11 +1196,15 @@ const GLYPH_NEON_COLORS = [
 
 const glyphTextureCache = new Map();
 
+/** Буквы/цифры на экране крупнее продуктов */
+const GLYPH_RADIUS_SCALE = 1.5;
+const GLYPH_RADIUS_CAP_PX = 240;
+
 function glyphFontPx(label, canvasSize) {
     const len = label.length;
-    if (len >= 3) return canvasSize * 0.34;
-    if (len === 2) return canvasSize * 0.42;
-    return canvasSize * 0.52;
+    if (len >= 3) return canvasSize * 0.37;
+    if (len === 2) return canvasSize * 0.46;
+    return canvasSize * 0.58;
 }
 
 /** Числовые уровни: следующее число по порядку 1 → NUMBER_SPAWN_CYCLE_MAX → 1 … */
@@ -1212,8 +1216,32 @@ let sequentialLetterIndex = 0;
 const GLYPH_MAX_TILT_RAD = (14 * Math.PI) / 180;
 const GLYPH_ROT_SPEED_RANGE = 0.008;
 
+function parseGlyphHex(hex) {
+    const h = (hex || '#00f3ff').replace('#', '');
+    if (h.length === 3) {
+        return {
+            r: parseInt(h[0] + h[0], 16),
+            g: parseInt(h[1] + h[1], 16),
+            b: parseInt(h[2] + h[2], 16)
+        };
+    }
+    if (h.length === 6) {
+        return {
+            r: parseInt(h.slice(0, 2), 16),
+            g: parseInt(h.slice(2, 4), 16),
+            b: parseInt(h.slice(4, 6), 16)
+        };
+    }
+    return { r: 0, g: 243, b: 255 };
+}
+
+function clampByte(v) {
+    return Math.max(0, Math.min(255, Math.round(v)));
+}
+
 function getOrCreateGlyphTexture(cacheKey, label, color) {
-    let hit = glyphTextureCache.get(cacheKey);
+    const versionedKey = `g3:${cacheKey}`;
+    let hit = glyphTextureCache.get(versionedKey);
     if (hit) return hit;
     const size = 600;
     const c = document.createElement('canvas');
@@ -1222,16 +1250,45 @@ function getOrCreateGlyphTexture(cacheKey, label, color) {
     const ctx = c.getContext('2d');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
     const fp = glyphFontPx(label, size);
     ctx.font = `900 ${fp}px "Outfit", "Segoe UI", system-ui, sans-serif`;
-    ctx.fillStyle = color;
-    ctx.strokeStyle = 'rgba(0,0,0,0.38)';
-    ctx.lineWidth = Math.max(3, size * 0.012);
     const dy = 10;
-    ctx.strokeText(label, size / 2, size / 2 + dy);
-    ctx.fillText(label, size / 2, size / 2 + dy);
+    const cx = size / 2;
+    const cy = size / 2 + dy;
+    const rgb = parseGlyphHex(color);
+
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = size * 0.092;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.9;
+    ctx.fillText(label, cx, cy);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+
+    ctx.strokeStyle = 'rgba(8,10,20,0.78)';
+    ctx.lineWidth = Math.max(6, size * 0.028);
+    ctx.strokeText(label, cx, cy);
+
+    const grad = ctx.createLinearGradient(cx - fp * 0.38, cy - fp * 0.42, cx + fp * 0.34, cy + fp * 0.48);
+    grad.addColorStop(
+        0,
+        `rgb(${clampByte(rgb.r * 1.28)},${clampByte(rgb.g * 1.28)},${clampByte(rgb.b * 1.28)})`
+    );
+    grad.addColorStop(0.5, color);
+    grad.addColorStop(
+        1,
+        `rgb(${clampByte(rgb.r * 0.5)},${clampByte(rgb.g * 0.5)},${clampByte(rgb.b * 0.5)})`
+    );
+    ctx.fillStyle = grad;
+    ctx.fillText(label, cx, cy);
+
     hit = { canvas: c, size };
-    glyphTextureCache.set(cacheKey, hit);
+    glyphTextureCache.set(versionedKey, hit);
     return hit;
 }
 
@@ -1252,7 +1309,11 @@ class Fruit {
         this.vy = -Math.min(vyWant, vyCap);
         const rLo = minSide * 0.068;
         const rHi = minSide * 0.108;
-        this.radius = Math.min(160, Math.max(36, rLo + Math.random() * (rHi - rLo)));
+        let r = Math.min(160, Math.max(36, rLo + Math.random() * (rHi - rLo)));
+        if (this.levelMode === 'letter' || this.levelMode === 'number') {
+            r = Math.min(GLYPH_RADIUS_CAP_PX, Math.max(54, r * GLYPH_RADIUS_SCALE));
+        }
+        this.radius = r;
 
         if (this.levelMode === 'fruit') {
             const fruitTypes = [
@@ -1356,7 +1417,8 @@ class Fruit {
             ctx.rotate(this.rotation);
             if (this.hitFlash > 0) {
                 ctx.shadowColor = '#00f3ff';
-                ctx.shadowBlur = 18 + this.hitFlash * 2;
+                const blurBase = this.levelMode === 'fruit' ? 18 : 26;
+                ctx.shadowBlur = blurBase + this.hitFlash * 2;
             }
             ctx.drawImage(texture, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
             ctx.shadowBlur = 0;
