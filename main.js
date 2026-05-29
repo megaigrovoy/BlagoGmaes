@@ -564,6 +564,8 @@ const displayPersonOrder = [];
 let poseFrameTsPrev = -1;
 let poseFrameTsCurr = -1;
 let poseFrameIntervalMs = 33.33;
+/** performance.now() в момент последнего commitPoseTargetsFromFrame — для lerp между кадрами камеры */
+let poseFrameCommitPerfMs = 0;
 let score = 0;
 let fruits = [];
 let particles = [];
@@ -972,6 +974,7 @@ function resetPoseDisplayState() {
     poseFrameTsPrev = -1;
     poseFrameTsCurr = -1;
     poseFrameIntervalMs = 33.33;
+    poseFrameCommitPerfMs = 0;
 }
 
 async function recreatePoseLandmarker() {
@@ -1846,7 +1849,10 @@ function buildKeyedHandsFromPose(displayPersons) {
     const out = [];
     for (let p = 0; p < ordered.length; p++) {
         const suffix = ordered.length > 1 ? `#${p}` : '';
-        const stableLm = smoothHandInputLm(ordered[p].key, ordered[p].lm, nowMs);
+        /** При интерполяции display уже сглажен между кадрами — лишний EMA на каждом rAF даёт «30 fps» */
+        const stableLm = trackTuning.interpolatePose
+            ? ordered[p].lm
+            : smoothHandInputLm(ordered[p].key, ordered[p].lm, nowMs);
         for (const def of POSE_BODY_HANDS) {
             const lm = buildSyntheticHandFromPose(stableLm, def);
             if (!lm) continue;
@@ -1991,6 +1997,8 @@ function commitPoseTargetsFromFrame(orderedPersons, nowMs) {
             if (idx >= 0) displayPersonOrder.splice(idx, 1);
         }
     }
+
+    poseFrameCommitPerfMs = performance.now();
 }
 
 function updatePoseDisplayLandmarks(nowMs) {
@@ -2001,13 +2009,13 @@ function updatePoseDisplayLandmarks(nowMs) {
         return;
     }
 
-    const frameTsMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : nowMs;
-    let t = 1;
-    const span = poseFrameTsCurr - poseFrameTsPrev;
-    if (span > 0.5) {
-        t = (frameTsMs - poseFrameTsPrev) / span;
-        t = Math.max(0, Math.min(1, t));
-    }
+    if (!poseFrameCommitPerfMs || !displayPersonOrder.length) return;
+
+    /** video.currentTime на Android меняется только с новым кадром (~30 fps) — t по wall clock после commit */
+    const wallNow = performance.now();
+    const interval = Math.max(20, poseFrameIntervalMs || 33.33);
+    let t = (wallNow - poseFrameCommitPerfMs) / interval;
+    t = Math.max(0, Math.min(1, t));
     const te = poseSmoothstep(t);
 
     for (const key of displayPersonOrder) {
@@ -2107,13 +2115,13 @@ function gameLoop(nowTime) {
     }
 
     if (gotNewVideoFrame && currentPoseResults?.landmarks?.length) {
-        commitPoseTargetsFromFrame(getOrderedPersons(currentPoseResults), startTimeMs);
+        commitPoseTargetsFromFrame(getOrderedPersons(currentPoseResults), nowTime);
     } else if (gotNewVideoFrame) {
         const activeKeys = new Set();
-        prunePoseSmoothState(activeKeys, startTimeMs);
+        prunePoseSmoothState(activeKeys, nowTime);
         for (const k of [...poseDisplayByKey.keys()]) {
             const s = poseSmoothByKey.get(k);
-            if (!s || startTimeMs - s.lastSeenMs > POSE_STATE_TTL_MS) {
+            if (!s || nowTime - s.lastSeenMs > POSE_STATE_TTL_MS) {
                 poseDisplayByKey.delete(k);
                 poseTargetByKey.delete(k);
                 posePrevTargetByKey.delete(k);
@@ -2123,7 +2131,7 @@ function gameLoop(nowTime) {
             if (!poseDisplayByKey.has(displayPersonOrder[i])) displayPersonOrder.splice(i, 1);
         }
     }
-    updatePoseDisplayLandmarks(startTimeMs);
+    updatePoseDisplayLandmarks(nowTime);
 
     const displayPersons = getDisplayOrderedPersons();
 
