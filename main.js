@@ -942,14 +942,7 @@ async function createPoseLandmarkerInstance() {
             delegate
         },
         runningMode: 'VIDEO',
-        numPoses: np,
-        ...(trackTuning.mobile
-            ? {
-                  minPoseDetectionConfidence: 0.3,
-                  minPosePresenceConfidence: 0.3,
-                  minTrackingConfidence: 0.3
-              }
-            : {})
+        numPoses: np
     });
 
     const delegateOrder = trackTuning.mobile ? ['CPU', 'GPU'] : ['GPU', 'CPU'];
@@ -1724,7 +1717,7 @@ const POSE_BODY_HANDS = [
 /** В режиме pose-hands сегменты считаем только по индексу + мизинцу: они стабильнее всего у BlazePose */
 const POSE_HAND_TIP_INDICES = [8, 20];
 /** Минимальная видимость запястья BlazePose, ниже которой кисть не используем */
-const POSE_HAND_MIN_VISIBILITY = trackTuning.mobile ? 0.3 : 0.55;
+const POSE_HAND_MIN_VISIBILITY = 0.55;
 
 function midpoint(a, b) {
     return { x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5 };
@@ -1801,9 +1794,9 @@ function getOrderedPersons(poseResults) {
  * (1–2 кадра), но достаточно, чтобы убрать пиксельный jitter.
  */
 const HAND_INPUT_INDICES = [15, 16, 17, 18, 19, 20, 21, 22];
-const HAND_INPUT_ALPHA = trackTuning.mobile ? 0.58 : 0.55;
+const HAND_INPUT_ALPHA = 0.55;
 const HAND_INPUT_TELEPORT = 0.20;
-const HAND_INPUT_TTL_MS = trackTuning.mobile ? 600 : 600;
+const HAND_INPUT_TTL_MS = 600;
 const handInputSmoothByKey = new Map();
 
 function smoothHandInputLm(personKey, rawLm, nowMs) {
@@ -1874,10 +1867,10 @@ function buildKeyedHandsFromPose(displayPersons) {
  * При телепорте (резкий скачок) стейт сбрасываем, чтобы не «ползло».
  */
 const FACE_LM_INDICES = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-const POSE_FACE_ALPHA = trackTuning.mobile ? 0.38 : 0.28;
+const POSE_FACE_ALPHA = 0.28;
 const POSE_BODY_ALPHA = 0.40;
 const POSE_TELEPORT_THRESHOLD = 0.22;
-const POSE_STATE_TTL_MS = trackTuning.mobile ? 600 : 600;
+const POSE_STATE_TTL_MS = 600;
 /** Map<personKey, { lm: { [idx]: {x, y, z, visibility} }, lastSeenMs }> */
 const poseSmoothByKey = new Map();
 
@@ -2039,7 +2032,7 @@ function getDisplayOrderedPersons() {
 }
 
 /** After hand drops from detection, keep extrapolating this long (ms) */
-const HAND_LOST_GRACE_MS = trackTuning.mobile ? 600 : 220;
+const HAND_LOST_GRACE_MS = 220;
 /** Max px per collision sub-segment so fast swipes do not tunnel through fruits */
 const COLLISION_SUBSTEP_PX = 72;
 /** Low-pass on fingertip delta for velocity (ghost extrapolation) */
