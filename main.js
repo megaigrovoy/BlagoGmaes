@@ -28,6 +28,25 @@ let playerModeCount = loadPlayerCountPreference();
 const DEBUG_FRAME_PERF =
     typeof location !== 'undefined' && new URLSearchParams(location.search).get('perf') === '1';
 
+/** Профиль трекинга: Android — CPU-делегат, интерполяция 30→120 Гц, мягче пороги (см. mobile-tracking-fix.md) */
+function detectTrackTuning() {
+    const ua = navigator.userAgent || '';
+    const android = /Android/i.test(ua);
+    const iphone = /iPhone|iPod/i.test(ua);
+    const mobile =
+        android ||
+        iphone ||
+        (navigator.maxTouchPoints > 0 &&
+            Math.min(window.screen?.width ?? 9999, window.screen?.height ?? 9999) < 820);
+    return {
+        android,
+        mobile,
+        /** Интерполяция display-landmarks между кадрами камеры на высокочастотных экранах */
+        interpolatePose: android || iphone
+    };
+}
+const trackTuning = detectTrackTuning();
+
 /** Звуки резов */
 let soundEffectsEnabled = true;
 /** Фоновая музыка в меню и в игре */
@@ -535,6 +554,16 @@ let visionTasksResolver = null;
 let mediapipePoseDelegate = 'CPU';
 let currentPoseResults = null;
 let lastVideoTime = -1;
+/** Монотонный timestamp для detectForVideo (Android иногда откатывает video.currentTime) */
+let lastDetectTsMs = -1;
+/** Интерполяция display-landmarks между кадрами камеры (~30 fps → 120 Hz rAF) */
+const posePrevTargetByKey = new Map();
+const poseTargetByKey = new Map();
+const poseDisplayByKey = new Map();
+const displayPersonOrder = [];
+let poseFrameTsPrev = -1;
+let poseFrameTsCurr = -1;
+let poseFrameIntervalMs = 33.33;
 let score = 0;
 let fruits = [];
 let particles = [];
@@ -764,6 +793,7 @@ function startLevel(levelIndex) {
     if (cfg.mode === 'letter') sequentialLetterIndex = 0;
     lastSpawnTime = Date.now();
     lastFrameTime = performance.now();
+    resetPoseDisplayState();
     mainMenu.classList.add('is-hidden');
     hudGame.classList.remove('is-hidden');
     canvasElement.style.visibility = "";
@@ -912,21 +942,43 @@ async function createPoseLandmarkerInstance() {
             delegate
         },
         runningMode: 'VIDEO',
-        numPoses: np
+        numPoses: np,
+        ...(trackTuning.mobile
+            ? {
+                  minPoseDetectionConfidence: 0.3,
+                  minPosePresenceConfidence: 0.3,
+                  minTrackingConfidence: 0.3
+              }
+            : {})
     });
 
-    try {
-        poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts('GPU'));
-        mediapipePoseDelegate = 'GPU';
-    } catch (e) {
-        console.warn('PoseLandmarker GPU failed, using CPU:', e);
-        poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts('CPU'));
-        mediapipePoseDelegate = 'CPU';
+    const delegateOrder = trackTuning.mobile ? ['CPU', 'GPU'] : ['GPU', 'CPU'];
+    let lastErr;
+    for (const delegate of delegateOrder) {
+        try {
+            poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts(delegate));
+            mediapipePoseDelegate = delegate;
+            console.info(
+                `[MediaPipe] pose: ${mediapipePoseDelegate}, numPoses=${np}, mobile=${trackTuning.mobile} — если CPU, игра тяжелее; в DevTools отключите throttling.`
+            );
+            return;
+        } catch (e) {
+            lastErr = e;
+            console.warn(`PoseLandmarker ${delegate} failed:`, e);
+        }
     }
+    throw lastErr ?? new Error('PoseLandmarker init failed');
+}
 
-    console.info(
-        `[MediaPipe] pose: ${mediapipePoseDelegate}, numPoses=${np} — если CPU, игра тяжелее; в DevTools отключите throttling.`
-    );
+function resetPoseDisplayState() {
+    posePrevTargetByKey.clear();
+    poseTargetByKey.clear();
+    poseDisplayByKey.clear();
+    displayPersonOrder.length = 0;
+    lastDetectTsMs = -1;
+    poseFrameTsPrev = -1;
+    poseFrameTsCurr = -1;
+    poseFrameIntervalMs = 33.33;
 }
 
 async function recreatePoseLandmarker() {
@@ -939,6 +991,7 @@ async function recreatePoseLandmarker() {
     }
     lastVideoTime = -1;
     currentPoseResults = null;
+    resetPoseDisplayState();
     await createPoseLandmarkerInstance();
 }
 
@@ -1107,12 +1160,23 @@ async function setupWebcam() {
     video.setAttribute("playsinline", "");
     video.setAttribute("autoplay", "");
 
-    const constraintSets = [
-        { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } },
-        { video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" } },
-        { video: { facingMode: "user" } },
+    const constraintSets = [];
+    if (trackTuning.android) {
+        constraintSets.push({
+            video: {
+                width: { ideal: 640, max: 640 },
+                height: { ideal: 480, max: 480 },
+                frameRate: { ideal: 30, max: 30 },
+                facingMode: 'user'
+            }
+        });
+    }
+    constraintSets.push(
+        { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } },
+        { video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } },
+        { video: { facingMode: 'user' } },
         { video: true }
-    ];
+    );
 
     let lastErr;
     for (const constraints of constraintSets) {
@@ -1660,7 +1724,7 @@ const POSE_BODY_HANDS = [
 /** В режиме pose-hands сегменты считаем только по индексу + мизинцу: они стабильнее всего у BlazePose */
 const POSE_HAND_TIP_INDICES = [8, 20];
 /** Минимальная видимость запястья BlazePose, ниже которой кисть не используем */
-const POSE_HAND_MIN_VISIBILITY = 0.55;
+const POSE_HAND_MIN_VISIBILITY = trackTuning.mobile ? 0.3 : 0.55;
 
 function midpoint(a, b) {
     return { x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5 };
@@ -1737,9 +1801,9 @@ function getOrderedPersons(poseResults) {
  * (1–2 кадра), но достаточно, чтобы убрать пиксельный jitter.
  */
 const HAND_INPUT_INDICES = [15, 16, 17, 18, 19, 20, 21, 22];
-const HAND_INPUT_ALPHA = 0.55;
+const HAND_INPUT_ALPHA = trackTuning.mobile ? 0.58 : 0.55;
 const HAND_INPUT_TELEPORT = 0.20;
-const HAND_INPUT_TTL_MS = 600;
+const HAND_INPUT_TTL_MS = trackTuning.mobile ? 600 : 600;
 const handInputSmoothByKey = new Map();
 
 function smoothHandInputLm(personKey, rawLm, nowMs) {
@@ -1780,8 +1844,8 @@ function pruneHandInputSmoothState(activeKeys, nowMs) {
     }
 }
 
-function buildKeyedHandsFromPose(poseResults) {
-    const ordered = getOrderedPersons(poseResults);
+function buildKeyedHandsFromPose(displayPersons) {
+    const ordered = displayPersons ?? getDisplayOrderedPersons();
     if (!ordered.length) return [];
     const nowMs = performance.now();
     const activeKeys = new Set(ordered.map((p) => p.key));
@@ -1810,10 +1874,10 @@ function buildKeyedHandsFromPose(poseResults) {
  * При телепорте (резкий скачок) стейт сбрасываем, чтобы не «ползло».
  */
 const FACE_LM_INDICES = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-const POSE_FACE_ALPHA = 0.28;
+const POSE_FACE_ALPHA = trackTuning.mobile ? 0.38 : 0.28;
 const POSE_BODY_ALPHA = 0.40;
 const POSE_TELEPORT_THRESHOLD = 0.22;
-const POSE_STATE_TTL_MS = 600;
+const POSE_STATE_TTL_MS = trackTuning.mobile ? 600 : 600;
 /** Map<personKey, { lm: { [idx]: {x, y, z, visibility} }, lastSeenMs }> */
 const poseSmoothByKey = new Map();
 
@@ -1858,8 +1922,124 @@ function prunePoseSmoothState(activeKeys, nowMs) {
     }
 }
 
+function cloneLandmarks(lm) {
+    return lm.map((p) => (p ? { x: p.x, y: p.y, z: p.z, visibility: p.visibility } : p));
+}
+
+function lerpLandmarks(lmA, lmB, t) {
+    const n = Math.max(lmA.length, lmB.length);
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+        const a = lmA[i];
+        const b = lmB[i];
+        if (!a && !b) {
+            out[i] = undefined;
+            continue;
+        }
+        if (!a) {
+            out[i] = cloneLandmarks([b])[0];
+            continue;
+        }
+        if (!b) {
+            out[i] = cloneLandmarks([a])[0];
+            continue;
+        }
+        out[i] = {
+            x: a.x + (b.x - a.x) * t,
+            y: a.y + (b.y - a.y) * t,
+            z: (a.z ?? 0) + ((b.z ?? 0) - (a.z ?? 0)) * t,
+            visibility: a.visibility ?? b.visibility
+        };
+    }
+    return out;
+}
+
+function poseSmoothstep(t) {
+    const x = Math.max(0, Math.min(1, t));
+    return x * x * (3 - 2 * x);
+}
+
+/** Сглаживание только на новом кадре камеры; prev/target — для интерполяции на rAF */
+function commitPoseTargetsFromFrame(orderedPersons, nowMs) {
+    const activeKeys = new Set();
+    displayPersonOrder.length = 0;
+
+    const frameTsMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : nowMs;
+    if (poseFrameTsCurr >= 0 && frameTsMs > poseFrameTsCurr) {
+        poseFrameIntervalMs = Math.max(16, Math.min(120, frameTsMs - poseFrameTsCurr));
+    }
+    if (poseFrameTsCurr >= 0) poseFrameTsPrev = poseFrameTsCurr;
+    else poseFrameTsPrev = frameTsMs;
+    poseFrameTsCurr = frameTsMs;
+
+    for (const { lm: rawLm, key } of orderedPersons) {
+        activeKeys.add(key);
+        displayPersonOrder.push(key);
+        const smoothed = smoothPoseLandmarks(key, rawLm, nowMs);
+        const prevTarget = poseTargetByKey.get(key);
+        if (prevTarget) posePrevTargetByKey.set(key, cloneLandmarks(prevTarget));
+        else posePrevTargetByKey.set(key, cloneLandmarks(smoothed));
+        poseTargetByKey.set(key, cloneLandmarks(smoothed));
+        if (!poseDisplayByKey.has(key) || !trackTuning.interpolatePose) {
+            poseDisplayByKey.set(key, cloneLandmarks(smoothed));
+        }
+    }
+
+    prunePoseSmoothState(activeKeys, nowMs);
+
+    for (const k of [...poseDisplayByKey.keys()]) {
+        if (activeKeys.has(k)) continue;
+        const s = poseSmoothByKey.get(k);
+        if (!s || nowMs - s.lastSeenMs > POSE_STATE_TTL_MS) {
+            poseDisplayByKey.delete(k);
+            poseTargetByKey.delete(k);
+            posePrevTargetByKey.delete(k);
+            const idx = displayPersonOrder.indexOf(k);
+            if (idx >= 0) displayPersonOrder.splice(idx, 1);
+        }
+    }
+}
+
+function updatePoseDisplayLandmarks(nowMs) {
+    if (!trackTuning.interpolatePose) {
+        for (const [key, target] of poseTargetByKey) {
+            poseDisplayByKey.set(key, cloneLandmarks(target));
+        }
+        return;
+    }
+
+    const frameTsMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : nowMs;
+    let t = 1;
+    const span = poseFrameTsCurr - poseFrameTsPrev;
+    if (span > 0.5) {
+        t = (frameTsMs - poseFrameTsPrev) / span;
+        t = Math.max(0, Math.min(1, t));
+    }
+    const te = poseSmoothstep(t);
+
+    for (const key of displayPersonOrder) {
+        const prev = posePrevTargetByKey.get(key);
+        const target = poseTargetByKey.get(key);
+        if (!target) continue;
+        if (!prev || te >= 1) {
+            poseDisplayByKey.set(key, cloneLandmarks(target));
+        } else {
+            poseDisplayByKey.set(key, lerpLandmarks(prev, target, te));
+        }
+    }
+}
+
+function getDisplayOrderedPersons() {
+    return displayPersonOrder
+        .map((key) => {
+            const lm = poseDisplayByKey.get(key);
+            return lm ? { key, lm } : null;
+        })
+        .filter(Boolean);
+}
+
 /** After hand drops from detection, keep extrapolating this long (ms) */
-const HAND_LOST_GRACE_MS = 220;
+const HAND_LOST_GRACE_MS = trackTuning.mobile ? 600 : 220;
 /** Max px per collision sub-segment so fast swipes do not tunnel through fruits */
 const COLLISION_SUBSTEP_PX = 72;
 /** Low-pass on fingertip delta for velocity (ghost extrapolation) */
@@ -1916,11 +2096,15 @@ function gameLoop(nowTime) {
     lastFrameTime = nowTime;
 
     let startTimeMs = performance.now();
+    let gotNewVideoFrame = false;
 
     if (lastVideoTime !== video.currentTime) {
         lastVideoTime = video.currentTime;
-        /** Время кадра видео (мс) — стабильнее для VIDEO mode, чем performance.now() */
-        const frameTsMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : startTimeMs;
+        gotNewVideoFrame = true;
+        /** Время кадра видео (мс) — строго монотонное для VIDEO mode */
+        let frameTsMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : startTimeMs;
+        if (frameTsMs <= lastDetectTsMs) frameTsMs = lastDetectTsMs + 1;
+        lastDetectTsMs = frameTsMs;
         try {
             const pRes = poseLandmarker.detectForVideo(video, frameTsMs);
             if (pRes) currentPoseResults = pRes;
@@ -1928,6 +2112,27 @@ function gameLoop(nowTime) {
             console.warn("PoseLandmarker detectForVideo:", err);
         }
     }
+
+    if (gotNewVideoFrame && currentPoseResults?.landmarks?.length) {
+        commitPoseTargetsFromFrame(getOrderedPersons(currentPoseResults), startTimeMs);
+    } else if (gotNewVideoFrame) {
+        const activeKeys = new Set();
+        prunePoseSmoothState(activeKeys, startTimeMs);
+        for (const k of [...poseDisplayByKey.keys()]) {
+            const s = poseSmoothByKey.get(k);
+            if (!s || startTimeMs - s.lastSeenMs > POSE_STATE_TTL_MS) {
+                poseDisplayByKey.delete(k);
+                poseTargetByKey.delete(k);
+                posePrevTargetByKey.delete(k);
+            }
+        }
+        for (let i = displayPersonOrder.length - 1; i >= 0; i--) {
+            if (!poseDisplayByKey.has(displayPersonOrder[i])) displayPersonOrder.splice(i, 1);
+        }
+    }
+    updatePoseDisplayLandmarks(startTimeMs);
+
+    const displayPersons = getDisplayOrderedPersons();
 
     // --- DRAWING ---
     // 1. Draw Camera Frame to Canvas (Remember canvas is mirrored via CSS, so we just draw normal image, but coordinates will logically mirror for collisions? Wait, CSS mirroring only visually flips the content. Let's fix this!)
@@ -1963,14 +2168,9 @@ function gameLoop(nowTime) {
     // Prepare line segments for collision detection
     const handSegments = [];
 
-    // Draw Pose
-    if (currentPoseResults && currentPoseResults.landmarks) {
-        const orderedPersons = getOrderedPersons(currentPoseResults);
-        const nowPoseMs = performance.now();
-        const activePoseKeys = new Set(orderedPersons.map((p) => p.key));
-        prunePoseSmoothState(activePoseKeys, nowPoseMs);
-        for (const { lm: rawLm, key: poseKey } of orderedPersons) {
-            const landmarks = smoothPoseLandmarks(poseKey, rawLm, nowPoseMs);
+    // Draw Pose (display-landmarks: сглажены на кадре камеры + интерполяция на rAF)
+    if (displayPersons.length > 0) {
+        for (const { lm: landmarks } of displayPersons) {
             canvasCtx.strokeStyle = 'rgba(0, 243, 255, 0.8)';
             canvasCtx.lineWidth = 6;
             canvasCtx.shadowColor = 'rgba(0, 243, 255, 1)';
@@ -2148,7 +2348,7 @@ function gameLoop(nowTime) {
         }
     }
 
-    const keyedHands = buildKeyedHandsFromPose(currentPoseResults);
+    const keyedHands = buildKeyedHandsFromPose(displayPersons);
     /** Из BlazePose валидные только два «кончика» — индекс и мизинец */
     const activeTipIndices = POSE_HAND_TIP_INDICES;
 
