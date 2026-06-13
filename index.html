@@ -34,7 +34,9 @@
           <h1 id="score-display"></h1>
           <div class="hud-row">
             <span id="level-display"></span>
+            <span id="combo-display" class="combo-display is-hidden"></span>
           </div>
+          <div id="word-progress" class="word-progress is-hidden"></div>
           <button type="button" id="btn-back-menu" class="btn-menu btn-back-menu"></button>
         </div>
         <div id="main-menu" class="menu-overlay is-hidden">
@@ -137,6 +139,17 @@
             <h2 id="menu-heading" class="menu-heading"></h2>
             <p id="menu-hint" class="menu-hint"></p>
             <div id="level-grid" class="level-grid"></div>
+          </div>
+        </div>
+        <div id="win-overlay" class="win-overlay is-hidden">
+          <div class="win-card">
+            <div id="win-stars" class="win-stars" aria-hidden="true"></div>
+            <h2 id="win-title" class="win-title"></h2>
+            <p id="win-score" class="win-score"></p>
+            <div class="win-actions">
+              <button type="button" id="btn-win-next" class="btn-menu btn-win-next"></button>
+              <button type="button" id="btn-win-menu" class="btn-menu btn-win-menu"></button>
+            </div>
           </div>
         </div>
         <div id="loading" class="visible">

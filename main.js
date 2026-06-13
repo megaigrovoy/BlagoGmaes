@@ -212,6 +212,63 @@ const enNumberSpawnUrlByKey = Object.fromEntries(
 /** Числовые уровни: по кругу только 1 … NUMBER_SPAWN_CYCLE_MAX (озвучка — sounds/numbers/ru|en) */
 const NUMBER_SPAWN_CYCLE_MAX = 10;
 
+/**
+ * Похвала за серию (комбо) — случайная фраза текущего языка.
+ * Папки sounds/praise/ru|en; файлы можно называть как угодно — проигрывается случайный.
+ */
+const ruPraiseUrls = Object.values(
+    import.meta.glob('./src/assets/sounds/praise/ru/*.MP3', { eager: true, query: '?url', import: 'default' })
+);
+const enPraiseUrls = Object.values(
+    import.meta.glob('./src/assets/sounds/praise/en/*.MP3', { eager: true, query: '?url', import: 'default' })
+);
+
+/** Фанфары/«ты победил» на экране победы — sounds/win/ru|en (любые имена, случайный) */
+const ruWinUrls = Object.values(
+    import.meta.glob('./src/assets/sounds/win/ru/*.MP3', { eager: true, query: '?url', import: 'default' })
+);
+const enWinUrls = Object.values(
+    import.meta.glob('./src/assets/sounds/win/en/*.MP3', { eager: true, query: '?url', import: 'default' })
+);
+
+/** Озвучка слова целиком (режим слов) — имя файла = слово: кот.MP3 / cat.MP3 (sounds/words/ru|en) */
+const ruWordUrlByText = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/sounds/words/ru/*.MP3', { eager: true, query: '?url', import: 'default' })
+    ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.MP3$/i, '').toLowerCase(), href])
+);
+const enWordUrlByText = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/sounds/words/en/*.MP3', { eager: true, query: '?url', import: 'default' })
+    ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.MP3$/i, '').toLowerCase(), href])
+);
+
+function pickRandomUrl(arr) {
+    return arr && arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
+}
+
+/** Голосовая похвала на серию — рандом из набора текущего языка */
+function playPraiseSound() {
+    if (!soundEffectsEnabled) return;
+    const u = pickRandomUrl(uiLang === 'en' ? enPraiseUrls : ruPraiseUrls);
+    if (u) playOneShotSfx(u, 1.0);
+}
+
+/** Фанфары на экране победы */
+function playWinSound() {
+    if (!soundEffectsEnabled) return;
+    const u = pickRandomUrl(uiLang === 'en' ? enWinUrls : ruWinUrls);
+    if (u) playOneShotSfx(u, 1.0);
+}
+
+/** Озвучка собранного слова целиком */
+function playWordSound(word) {
+    if (!soundEffectsEnabled || !word) return;
+    const map = uiLang === 'en' ? enWordUrlByText : ruWordUrlByText;
+    const u = map[String(word).toLowerCase()];
+    if (u) playOneShotSfx(u, 1.0);
+}
+
 function playSpawnVoice(emoji) {
     if (!soundEffectsEnabled) return;
     const url = spawnVoiceUrlResolve(emoji);
@@ -383,6 +440,9 @@ function warmSfxBuffers(urls, concurrency = 6) {
 /** Звуки, нужные конкретному уровню в текущем языке (срезы + озвучка режима) — для приоритетного прогрева */
 function currentLevelSfxUrls(cfg) {
     const urls = [...SLICE_SFX_FALLBACK_POOL];
+    /** Похвала и фанфары нужны в любом режиме */
+    urls.push(...(uiLang === 'en' ? enPraiseUrls : ruPraiseUrls));
+    urls.push(...(uiLang === 'en' ? enWinUrls : ruWinUrls));
     if (cfg?.mode === 'fruit') {
         for (const e of Object.keys(spawnVoiceUrlByEmoji)) {
             urls.push(spawnVoiceUrlResolve(e));
@@ -393,6 +453,10 @@ function currentLevelSfxUrls(cfg) {
     } else if (cfg?.mode === 'number') {
         const map = uiLang === 'en' ? enNumberSpawnUrlByKey : ruNumberSpawnUrlByKey;
         urls.push(...Object.values(map));
+    } else if (cfg?.mode === 'word') {
+        const letters = uiLang === 'en' ? enLetterSpawnUrlByLower : ruLetterSpawnUrlByLower;
+        urls.push(...Object.values(letters));
+        urls.push(...Object.values(uiLang === 'en' ? enWordUrlByText : ruWordUrlByText));
     }
     return urls.filter(Boolean);
 }
@@ -411,15 +475,18 @@ function allSfxUrlsCurrentLangFirst() {
                   ...Object.values(ruNumberSpawnUrlByKey),
                   ...Object.values(spawnVoiceUrlByEmoji)
               ];
+    const praiseWin = [...ruPraiseUrls, ...enPraiseUrls, ...ruWinUrls, ...enWinUrls];
     const rest = [
         ...Object.values(spawnVoiceUrlByEmoji),
         ...Object.values(enSpawnVoiceUrlByStem),
         ...Object.values(ruLetterSpawnUrlByLower),
         ...Object.values(enLetterSpawnUrlByLower),
         ...Object.values(ruNumberSpawnUrlByKey),
-        ...Object.values(enNumberSpawnUrlByKey)
+        ...Object.values(enNumberSpawnUrlByKey),
+        ...Object.values(ruWordUrlByText),
+        ...Object.values(enWordUrlByText)
     ];
-    return [...new Set([...SLICE_SFX_FALLBACK_POOL, ...curLang, ...rest])].filter(Boolean);
+    return [...new Set([...SLICE_SFX_FALLBACK_POOL, ...praiseWin, ...curLang, ...rest])].filter(Boolean);
 }
 
 function warmSfxAudioBuffersYielding() {
@@ -585,6 +652,14 @@ const levelGrid = document.getElementById('level-grid');
 const hudGame = document.getElementById('hud-game');
 const levelDisplay = document.getElementById('level-display');
 const btnBackMenu = document.getElementById('btn-back-menu');
+const comboDisplay = document.getElementById('combo-display');
+const wordProgressEl = document.getElementById('word-progress');
+const winOverlay = document.getElementById('win-overlay');
+const winStarsEl = document.getElementById('win-stars');
+const winTitleEl = document.getElementById('win-title');
+const winScoreEl = document.getElementById('win-score');
+const btnWinNext = document.getElementById('btn-win-next');
+const btnWinMenu = document.getElementById('btn-win-menu');
 
 let poseLandmarker;
 let visionTasksResolver = null;
@@ -608,17 +683,292 @@ let fruits = [];
 let particles = [];
 let isPlaying = false;
 
-/** mode: fruit — эмодзи; letter — кириллица или латиница по языку UI; number — целые 1–10 по кругу */
+/** Серия (комбо): растёт за каждый успешный рез, обнуляется на промах */
+let comboStreak = 0;
+let comboBest = 0;
+/** Прогресс уровня и точность для звёзд */
+let levelGoodHits = 0;
+let levelBadEvents = 0;
+let levelComplete = false;
+/** Всплывающие надписи («Серия x3», «Молодец!») и кратковременная вспышка экрана */
+let floatingTexts = [];
+let screenFlash = 0;
+/** Салют на экране победы */
+let winBurstTimer = 0;
+
+/** Очко за каждый множитель серии (растёт по мере серии) */
+function comboMultiplier() {
+    return Math.min(5, 1 + Math.floor(comboStreak / 5));
+}
+
+/** Детские слова по языку UI (3–4 буквы). Имя звукового файла = слово в нижнем регистре. */
+const WORD_LIST_RU = ['КОТ', 'ДОМ', 'МАМА', 'СОК', 'МЯЧ', 'СЫР'];
+const WORD_LIST_EN = ['CAT', 'DOG', 'SUN', 'MOM', 'CUP', 'BED'];
+
+function wordListForUiLang() {
+    return uiLang === 'en' ? WORD_LIST_EN : WORD_LIST_RU;
+}
+
+/** Состояние режима слов */
+let wordQueue = [];
+let wordQueueIndex = 0;
+let currentWord = '';
+let wordProgress = 0;
+let wordsCompleted = 0;
+
+function resetWordState() {
+    wordQueue = [...wordListForUiLang()];
+    shuffleArrayInPlace(wordQueue);
+    wordQueueIndex = 0;
+    wordProgress = 0;
+    wordsCompleted = 0;
+    currentWord = wordQueue[0] || '';
+}
+
+function advanceToNextWord() {
+    wordQueueIndex = (wordQueueIndex + 1) % Math.max(1, wordQueue.length);
+    currentWord = wordQueue[wordQueueIndex] || '';
+    wordProgress = 0;
+}
+
+/** Какую букву выдать в режиме слов: чаще — нужную следующую, иначе случайный отвлекающий символ */
+function pickWordSpawnChar() {
+    const alphabet = letterAlphabetForUiLang();
+    const need = currentWord[wordProgress];
+    if (need && Math.random() < 0.55) return need;
+    return alphabet[Math.floor(Math.random() * alphabet.length)];
+}
+
+/** Всплывающая надпись, поднимается и затухает; компенсирует CSS-зеркало canvas (как буквы) */
+class FloatingText {
+    constructor(x, y, text, color) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.color = color || '#00f3ff';
+        this.life = 1;
+        this.vy = -1.4;
+        this.scale = 0.6;
+    }
+    update(dt = 1) {
+        this.y += this.vy * dt;
+        this.vy *= 0.96;
+        this.scale += (1 - this.scale) * 0.18 * dt;
+        this.life -= 0.018 * dt;
+    }
+    draw(ctx) {
+        const a = Math.max(0, this.life);
+        if (a <= 0) return;
+        const { minSide } = gameLayout;
+        const fontPx = Math.max(26, minSide * 0.06) * this.scale;
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.scale(-1, 1); // компенсация CSS scaleX(-1)
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = `900 ${fontPx}px "Outfit", "Segoe UI", system-ui, sans-serif`;
+        ctx.globalAlpha = a;
+        ctx.lineWidth = Math.max(4, fontPx * 0.14);
+        ctx.strokeStyle = 'rgba(8,10,20,0.8)';
+        ctx.strokeText(this.text, 0, 0);
+        ctx.shadowColor = this.color;
+        ctx.shadowBlur = fontPx * 0.5;
+        ctx.fillStyle = this.color;
+        ctx.fillText(this.text, 0, 0);
+        ctx.restore();
+    }
+}
+
+function spawnComboText(x, y, color) {
+    const mult = comboMultiplier();
+    let label;
+    if (comboStreak > 0 && comboStreak % 5 === 0) {
+        label = `${t('praiseCombo')} x${mult}!`;
+    } else if (mult > 1) {
+        label = `x${mult}`;
+    } else {
+        return;
+    }
+    floatingTexts.push(new FloatingText(x, y, label, color));
+}
+
+function juiceBurst(x, y, color, dots, sparks) {
+    particles.push(new SliceBurst(x, y, color));
+    for (let p = 0; p < dots; p++) particles.push(new Particle(x, y, color, 'dot'));
+    for (let p = 0; p < sparks; p++) particles.push(new Particle(x, y, color, 'spark'));
+}
+
+function updateComboHud() {
+    if (!comboDisplay) return;
+    if (comboStreak >= 2) {
+        comboDisplay.textContent = `${t('comboLabel')} x${comboMultiplier()} · ${comboStreak}`;
+        comboDisplay.classList.remove('is-hidden');
+        comboDisplay.classList.remove('combo-pop');
+        void comboDisplay.offsetWidth; // перезапуск CSS-анимации
+        comboDisplay.classList.add('combo-pop');
+    } else {
+        comboDisplay.classList.add('is-hidden');
+    }
+}
+
+function registerGoodHit(fruit, points) {
+    comboStreak += 1;
+    if (comboStreak > comboBest) comboBest = comboStreak;
+    levelGoodHits += 1;
+    score += points * comboMultiplier();
+    scoreDisplay.innerText = formatScore(score);
+    updateComboHud();
+    spawnComboText(fruit.x, fruit.y - fruit.radius * 0.6, fruit.color);
+    if (comboStreak > 0 && comboStreak % 5 === 0) {
+        playPraiseSound();
+        screenFlash = Math.max(screenFlash, 0.22);
+    } else {
+        screenFlash = Math.max(screenFlash, 0.1);
+    }
+}
+
+function breakCombo() {
+    if (comboStreak > 0) {
+        comboStreak = 0;
+        updateComboHud();
+    }
+}
+
+function updateWordHud() {
+    if (!wordProgressEl) return;
+    if (getCurrentLevelConfig().mode !== 'word') {
+        wordProgressEl.classList.add('is-hidden');
+        return;
+    }
+    wordProgressEl.classList.remove('is-hidden');
+    wordProgressEl.innerHTML = '';
+    const prompt = document.createElement('span');
+    prompt.className = 'word-prompt';
+    prompt.textContent = `${t('wordPrompt')}:`;
+    wordProgressEl.appendChild(prompt);
+    for (let i = 0; i < currentWord.length; i++) {
+        const slot = document.createElement('span');
+        slot.className = 'word-slot' + (i < wordProgress ? ' is-filled' : '');
+        slot.textContent = currentWord[i];
+        wordProgressEl.appendChild(slot);
+    }
+}
+
+function onWordCompleted(fruit) {
+    wordsCompleted += 1;
+    playWordSound(currentWord);
+    floatingTexts.push(new FloatingText(fruit.x, fruit.y - fruit.radius, currentWord, '#76ff03'));
+    score += 50 * comboMultiplier();
+    scoreDisplay.innerText = formatScore(score);
+    screenFlash = Math.max(screenFlash, 0.28);
+    const cfg = getCurrentLevelConfig();
+    if (wordsCompleted >= (cfg.wordGoal || 3)) {
+        completeLevel();
+    } else {
+        advanceToNextWord();
+        updateWordHud();
+    }
+}
+
+function checkLevelGoal() {
+    const cfg = getCurrentLevelConfig();
+    if (cfg.mode === 'word') return;
+    if (!levelComplete && cfg.goal && levelGoodHits >= cfg.goal) {
+        completeLevel();
+    }
+}
+
+/** Рез засчитан: комбо, очки, режим слов, «сок» */
+function handleSliceScoring(fruit) {
+    playSliceSoundForTarget(fruit);
+    if (fruit.levelMode === 'word') {
+        const need = currentWord[wordProgress];
+        if (need && fruit.glyphChar === need) {
+            wordProgress += 1;
+            registerGoodHit(fruit, 10);
+            juiceBurst(fruit.x, fruit.y, fruit.color, 26 + comboMultiplier() * 6, 16);
+            updateWordHud();
+            if (wordProgress >= currentWord.length) onWordCompleted(fruit);
+        } else {
+            /** Неверная буква — мягко: без штрафа и без сброса серии (детский режим) */
+            juiceBurst(fruit.x, fruit.y, 'rgba(185,195,215,1)', 8, 4);
+        }
+        return;
+    }
+    registerGoodHit(fruit, 10);
+    const extra = Math.min(18, comboMultiplier() * 4);
+    juiceBurst(fruit.x, fruit.y, fruit.color, 26 + extra, 16);
+    checkLevelGoal();
+}
+
+/** Предмет улетел вниз несрезанным */
+function handleMiss() {
+    if (getCurrentLevelConfig().mode === 'word') return; // букв много — не штрафуем
+    levelBadEvents += 1;
+    breakCombo();
+    score = Math.max(0, score - MISS_PENALTY);
+    scoreDisplay.innerText = formatScore(score);
+}
+
+function computeStars() {
+    const attempts = levelGoodHits + levelBadEvents;
+    const acc = attempts > 0 ? levelGoodHits / attempts : 1;
+    if (acc >= 0.9) return 3;
+    if (acc >= 0.7) return 2;
+    return 1;
+}
+
+function completeLevel() {
+    if (levelComplete) return;
+    levelComplete = true;
+    comboDisplay?.classList.add('is-hidden');
+    playWinSound();
+    winBurstTimer = 0;
+    showWinOverlay(computeStars());
+}
+
+function showWinOverlay(stars) {
+    if (winStarsEl) {
+        winStarsEl.innerHTML = '';
+        for (let i = 0; i < 3; i++) {
+            const s = document.createElement('span');
+            s.className = 'win-star' + (i < stars ? ' is-on' : '');
+            s.textContent = '⭐';
+            winStarsEl.appendChild(s);
+        }
+    }
+    if (winTitleEl) winTitleEl.textContent = t('winTitle');
+    if (winScoreEl) winScoreEl.textContent = `${t('winScoreLabel')}: ${score} · ${t('comboMax')}: ${comboBest}`;
+    const hasNext = currentLevelIndex < LEVELS.length - 1;
+    if (btnWinNext) {
+        btnWinNext.textContent = hasNext ? t('winNextLevel') : t('winReplay');
+        btnWinNext.classList.remove('is-hidden');
+    }
+    if (btnWinMenu) btnWinMenu.textContent = t('winToMenu');
+    winOverlay?.classList.remove('is-hidden');
+}
+
+function hideWinOverlay() {
+    winOverlay?.classList.add('is-hidden');
+}
+
+/**
+ * mode: fruit — эмодзи; letter — кириллица/латиница по языку UI; number — 1–10 по кругу; word — собрать слово.
+ * goal — сколько объектов нужно срезать, чтобы пройти уровень; word: wordGoal — сколько слов собрать.
+ */
 const LEVELS = [
-    { mode: 'fruit', maxConcurrent: 1, spawnIntervalMs: 2200 },
-    { mode: 'fruit', maxConcurrent: 2, spawnIntervalMs: 1900 },
-    { mode: 'fruit', maxConcurrent: 3, spawnIntervalMs: 1550 },
-    { mode: 'letter', maxConcurrent: 1, spawnIntervalMs: 2200 },
-    { mode: 'letter', maxConcurrent: 2, spawnIntervalMs: 1900 },
-    { mode: 'letter', maxConcurrent: 3, spawnIntervalMs: 1550 },
-    { mode: 'number', maxConcurrent: 1, spawnIntervalMs: 2200 },
-    { mode: 'number', maxConcurrent: 2, spawnIntervalMs: 1900 },
-    { mode: 'number', maxConcurrent: 3, spawnIntervalMs: 1550 }
+    { mode: 'fruit', maxConcurrent: 1, spawnIntervalMs: 2200, goal: 10 },
+    { mode: 'fruit', maxConcurrent: 2, spawnIntervalMs: 1900, goal: 14 },
+    { mode: 'fruit', maxConcurrent: 3, spawnIntervalMs: 1550, goal: 18 },
+    { mode: 'letter', maxConcurrent: 1, spawnIntervalMs: 2200, goal: 10 },
+    { mode: 'letter', maxConcurrent: 2, spawnIntervalMs: 1900, goal: 14 },
+    { mode: 'letter', maxConcurrent: 3, spawnIntervalMs: 1550, goal: 18 },
+    { mode: 'number', maxConcurrent: 1, spawnIntervalMs: 2200, goal: 10 },
+    { mode: 'number', maxConcurrent: 2, spawnIntervalMs: 1900, goal: 14 },
+    { mode: 'number', maxConcurrent: 3, spawnIntervalMs: 1550, goal: 18 },
+    { mode: 'word', maxConcurrent: 3, spawnIntervalMs: 1500, wordGoal: 3 },
+    { mode: 'word', maxConcurrent: 4, spawnIntervalMs: 1350, wordGoal: 4 },
+    { mode: 'word', maxConcurrent: 4, spawnIntervalMs: 1200, wordGoal: 5 }
 ];
 
 /** Кадров подряд без пересечения с предметом, чтобы снова считать «новый вход» (трекинг мерцает на границе круга) */
@@ -636,7 +986,21 @@ const I18N = {
         tierProducts: 'Продукты',
         tierLetters: 'Буквы',
         tierNumbers: 'Цифры',
+        tierWords: 'Слова',
         hudAtOnce: '',
+        comboLabel: 'Серия',
+        comboMax: 'Макс. серия',
+        wordPrompt: 'Собери слово',
+        winTitle: 'Уровень пройден!',
+        winScoreLabel: 'Счёт',
+        winNextLevel: 'Дальше',
+        winReplay: 'Ещё раз',
+        winToMenu: 'Меню',
+        praiseGreat: 'Молодец!',
+        praiseSuper: 'Супер!',
+        praiseWow: 'Вот это да!',
+        praiseCombo: 'Серия',
+        hudGoal: 'Цель',
         scorePrefix: 'Счёт: ',
         menuHeading: 'Выберите уровень',
         menuHint: 'Чем выше уровень в категории (1→3), тем больше предметов одновременно на экране.',
@@ -670,7 +1034,21 @@ const I18N = {
         tierProducts: 'Products',
         tierLetters: 'Letters',
         tierNumbers: 'Numbers',
+        tierWords: 'Words',
         hudAtOnce: 'at once',
+        comboLabel: 'Combo',
+        comboMax: 'Best combo',
+        wordPrompt: 'Spell the word',
+        winTitle: 'Level complete!',
+        winScoreLabel: 'Score',
+        winNextLevel: 'Next',
+        winReplay: 'Replay',
+        winToMenu: 'Menu',
+        praiseGreat: 'Great!',
+        praiseSuper: 'Super!',
+        praiseWow: 'Wow!',
+        praiseCombo: 'Combo',
+        hudGoal: 'Goal',
         scorePrefix: 'Score: ',
         menuHeading: 'Choose a level',
         menuHint: 'Within each category (1→3), higher tiers mean more objects at once.',
@@ -723,11 +1101,14 @@ function levelTierTitle(levelIndex) {
     const sub = (levelIndex % 3) + 1;
     if (levelIndex < 3) return `${t('tierProducts')} ${sub}`;
     if (levelIndex < 6) return `${t('tierLetters')} ${sub}`;
-    return `${t('tierNumbers')} ${sub}`;
+    if (levelIndex < 9) return `${t('tierNumbers')} ${sub}`;
+    return `${t('tierWords')} ${sub}`;
 }
 
 function formatHudLevelLine(levelIndex, maxConcurrent) {
     const title = levelTierTitle(levelIndex);
+    const cfg = LEVELS[levelIndex];
+    if (cfg?.mode === 'word') return title;
     if (uiLang === 'en') {
         return `${title} · ${pluralSimultaneousEn(maxConcurrent)} ${t('hudAtOnce')}`.trim();
     }
@@ -803,11 +1184,17 @@ function applyUiTranslations() {
 
 function showMainMenu() {
     isPlaying = false;
+    levelComplete = false;
     stopGameMusic();
+    hideWinOverlay();
+    comboDisplay?.classList.add('is-hidden');
+    wordProgressEl?.classList.add('is-hidden');
     mainMenu.classList.remove('is-hidden');
     hudGame.classList.add('is-hidden');
     fruits.length = 0;
     particles.length = 0;
+    floatingTexts = [];
+    screenFlash = 0;
     prevFingertipsByKey.clear();
     handKeyLastSeenMs.clear();
     tipVelocityByKey.clear();
@@ -830,8 +1217,24 @@ function startLevel(levelIndex) {
     levelDisplay.textContent = formatHudLevelLine(currentLevelIndex, cfg.maxConcurrent);
     fruits.length = 0;
     particles.length = 0;
+    floatingTexts = [];
+    screenFlash = 0;
+    comboStreak = 0;
+    comboBest = 0;
+    levelGoodHits = 0;
+    levelBadEvents = 0;
+    levelComplete = false;
+    winBurstTimer = 0;
+    hideWinOverlay();
+    comboDisplay?.classList.add('is-hidden');
     if (cfg.mode === 'number') sequentialSpawnNumber = 1;
     if (cfg.mode === 'letter') sequentialLetterIndex = 0;
+    if (cfg.mode === 'word') {
+        resetWordState();
+        updateWordHud();
+    } else {
+        wordProgressEl?.classList.add('is-hidden');
+    }
     lastSpawnTime = Date.now();
     lastFrameTime = performance.now();
     resetPoseDisplayState();
@@ -843,11 +1246,23 @@ function startLevel(levelIndex) {
     /** Музыка и первый кадр — в microtask после unlock play(), иначе iOS Chrome иногда глушит первый HTMLAudio */
     queueMicrotask(() => {
         startGameMusicPlaylist();
-        requestAnimationFrame(gameLoop);
+        ensureGameLoop();
     });
 }
 
 btnBackMenu.addEventListener('click', () => showMainMenu());
+
+btnWinNext?.addEventListener('click', () => {
+    tryUnlockAudioOnUserGesture();
+    hideWinOverlay();
+    const hasNext = currentLevelIndex < LEVELS.length - 1;
+    startLevel(hasNext ? currentLevelIndex + 1 : currentLevelIndex);
+});
+
+btnWinMenu?.addEventListener('click', () => {
+    hideWinOverlay();
+    showMainMenu();
+});
 
 /**
  * Fullscreen API: на ПК и iPad/Android Chrome работает; на iPhone Safari — нет (там путь через PWA).
@@ -1409,7 +1824,7 @@ class Fruit {
         const rLo = minSide * 0.068;
         const rHi = minSide * 0.108;
         let r = Math.min(160, Math.max(36, rLo + Math.random() * (rHi - rLo)));
-        if (this.levelMode === 'letter' || this.levelMode === 'number') {
+        if (this.levelMode !== 'fruit') {
             r = Math.min(GLYPH_RADIUS_CAP_PX, Math.max(54, r * GLYPH_RADIUS_SCALE));
         }
         this.radius = r;
@@ -1437,6 +1852,15 @@ class Fruit {
             const alphabet = letterAlphabetForUiLang();
             const ch = alphabet[sequentialLetterIndex];
             sequentialLetterIndex = (sequentialLetterIndex + 1) % alphabet.length;
+            this.glyphChar = ch;
+            this.color = GLYPH_NEON_COLORS[Math.floor(Math.random() * GLYPH_NEON_COLORS.length)];
+            const cacheKey = `ltr:${ch}:${this.color}`;
+            this.textureRef = getOrCreateGlyphTexture(cacheKey, ch, this.color);
+            playLetterSpawnSound(ch);
+        } else if (this.levelMode === 'word') {
+            this.emoji = null;
+            const ch = pickWordSpawnChar();
+            this.glyphChar = ch;
             this.color = GLYPH_NEON_COLORS[Math.floor(Math.random() * GLYPH_NEON_COLORS.length)];
             const cacheKey = `ltr:${ch}:${this.color}`;
             this.textureRef = getOrCreateGlyphTexture(cacheKey, ch, this.color);
@@ -2124,8 +2548,21 @@ let perfFrameSumMs = 0;
 let perfFrameCount = 0;
 let perfLastLogMs = 0;
 
+/** Единственный владелец rAF-цикла: на экране победы цикл продолжается (салют), не плодим второй */
+let rafActive = false;
+
+function ensureGameLoop() {
+    if (!rafActive) {
+        rafActive = true;
+        requestAnimationFrame(gameLoop);
+    }
+}
+
 function gameLoop(nowTime) {
-    if (!isPlaying) return;
+    if (!isPlaying) {
+        rafActive = false;
+        return;
+    }
 
     const levelCfg = getCurrentLevelConfig();
 
@@ -2475,7 +2912,7 @@ function gameLoop(nowTime) {
     // Update and draw fruits
     const now = Date.now();
     const unslicedCount = fruits.filter((f) => !f.isSliced).length;
-    if (now - lastSpawnTime >= levelCfg.spawnIntervalMs && unslicedCount < levelCfg.maxConcurrent) {
+    if (!levelComplete && now - lastSpawnTime >= levelCfg.spawnIntervalMs && unslicedCount < levelCfg.maxConcurrent) {
         fruits.push(new Fruit());
         lastSpawnTime = now;
     }
@@ -2502,7 +2939,7 @@ function gameLoop(nowTime) {
                     fruit._wasTouchingHand = false;
                 }
             }
-            const cutStroke = pathIntersectsFruit && !fruit._wasTouchingHand;
+            const cutStroke = !levelComplete && pathIntersectsFruit && !fruit._wasTouchingHand;
             if (pathIntersectsFruit) {
                 fruit._wasTouchingHand = true;
             }
@@ -2520,27 +2957,26 @@ function gameLoop(nowTime) {
                     fruit.rotSpeed2 = fruit.rotationSpeed + 0.014;
                 }
 
-                score += 10;
-                scoreDisplay.innerText = formatScore(score);
-                playSliceSoundForTarget(fruit);
-
-                particles.push(new SliceBurst(fruit.x, fruit.y, fruit.color));
-                for (let p = 0; p < 26; p++) {
-                    particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'dot'));
-                }
-                for (let p = 0; p < 16; p++) {
-                    particles.push(new Particle(fruit.x, fruit.y, fruit.color, 'spark'));
-                }
+                handleSliceScoring(fruit);
             }
         }
 
         // Remove if out of bounds (bottom)
         if (fruit.y > gameLayout.h + 100) {
-            if (!fruit.isSliced) {
-                score = Math.max(0, score - MISS_PENALTY);
-                scoreDisplay.innerText = formatScore(score);
-            }
+            if (!fruit.isSliced && !levelComplete) handleMiss();
             fruits.splice(i, 1);
+        }
+    }
+
+    /** Салют на экране победы */
+    if (levelComplete) {
+        winBurstTimer -= dt;
+        if (winBurstTimer <= 0) {
+            winBurstTimer = 16 + Math.random() * 12;
+            const fx = gameLayout.w * (0.18 + Math.random() * 0.64);
+            const fy = gameLayout.h * (0.18 + Math.random() * 0.42);
+            const col = GLYPH_NEON_COLORS[Math.floor(Math.random() * GLYPH_NEON_COLORS.length)];
+            juiceBurst(fx, fy, col, 30, 18);
         }
     }
 
@@ -2550,6 +2986,24 @@ function gameLoop(nowTime) {
         p.update(dt);
         p.draw(canvasCtx);
         if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    // Всплывающие надписи (серия / похвала / собранное слово)
+    for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        const ft = floatingTexts[i];
+        ft.update(dt);
+        ft.draw(canvasCtx);
+        if (ft.life <= 0) floatingTexts.splice(i, 1);
+    }
+
+    // Мягкая вспышка-«сок» на удачный рез
+    if (screenFlash > 0) {
+        canvasCtx.save();
+        canvasCtx.globalAlpha = Math.min(0.22, screenFlash);
+        canvasCtx.fillStyle = '#ffffff';
+        canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.restore();
+        screenFlash -= 0.05 * dt;
     }
 
     if (DEBUG_FRAME_PERF) {
@@ -2568,7 +3022,11 @@ function gameLoop(nowTime) {
         }
     }
 
-    if (isPlaying) requestAnimationFrame(gameLoop);
+    if (isPlaying) {
+        requestAnimationFrame(gameLoop);
+    } else {
+        rafActive = false;
+    }
 }
 
 function showStartError(e) {
