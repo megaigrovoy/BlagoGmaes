@@ -1079,9 +1079,6 @@ const LEVELS = [
     { mode: 'fruit', maxConcurrent: 1, spawnIntervalMs: 2200, goal: 10 },
     { mode: 'fruit', maxConcurrent: 2, spawnIntervalMs: 1900, goal: 14 },
     { mode: 'fruit', maxConcurrent: 3, spawnIntervalMs: 1550, goal: 18 },
-    { mode: 'letter', maxConcurrent: 1, spawnIntervalMs: 2200, goal: 10 },
-    { mode: 'letter', maxConcurrent: 2, spawnIntervalMs: 1900, goal: 14 },
-    { mode: 'letter', maxConcurrent: 3, spawnIntervalMs: 1550, goal: 18 },
     { mode: 'number', maxConcurrent: 1, spawnIntervalMs: 2200, goal: 10 },
     { mode: 'number', maxConcurrent: 2, spawnIntervalMs: 1900, goal: 14 },
     { mode: 'number', maxConcurrent: 3, spawnIntervalMs: 1550, goal: 18 },
@@ -1217,11 +1214,22 @@ function pluralSimultaneousEn(n) {
 }
 
 function levelTierTitle(levelIndex) {
-    const sub = (levelIndex % 3) + 1;
-    if (levelIndex < 3) return `${t('tierProducts')} ${sub}`;
-    if (levelIndex < 6) return `${t('tierLetters')} ${sub}`;
-    if (levelIndex < 9) return `${t('tierNumbers')} ${sub}`;
-    return `${t('tierWords')} ${sub}`;
+    const cfg = LEVELS[levelIndex];
+    if (!cfg) return '';
+    /** Порядковый номер внутри своей категории — не зависит от состава LEVELS */
+    let sub = 0;
+    for (let i = 0; i <= levelIndex; i++) {
+        if (LEVELS[i].mode === cfg.mode) sub++;
+    }
+    const name =
+        cfg.mode === 'fruit'
+            ? t('tierProducts')
+            : cfg.mode === 'letter'
+            ? t('tierLetters')
+            : cfg.mode === 'number'
+            ? t('tierNumbers')
+            : t('tierWords');
+    return `${name} ${sub}`;
 }
 
 function formatHudLevelLine(levelIndex, maxConcurrent) {
