@@ -356,45 +356,82 @@ function scheduleStaggeredOstPreload() {
     }
 }
 
-function warmSfxAudioBuffersYielding() {
+/**
+ * Декодирует набор URL в буферы параллельно с ограничением «в полёте».
+ * Параллель (вместо строго серийного 16 мс) на iPad готовит озвучку в разы быстрее,
+ * а лимит concurrency не даёт decodeAudioData «забить» главный поток.
+ * ensureSfxAudioBuffer дедуплицирует — повторные вызовы по тем же URL дешёвые.
+ */
+function warmSfxBuffers(urls, concurrency = 6) {
     const ctx = getOrCreateSfxContext();
-    if (!ctx) return;
-    const sfxOnly = [
-        ...new Set([
-            ...Object.values(sliceSoundUrlByEmoji),
-            ...Object.values(spawnVoiceUrlByEmoji),
-            ...Object.values(enSpawnVoiceUrlByStem),
-            ...Object.values(ruLetterSpawnUrlByLower),
-            ...Object.values(enLetterSpawnUrlByLower),
-            ...Object.values(ruNumberSpawnUrlByKey),
-            ...Object.values(enNumberSpawnUrlByKey)
-        ])
-    ].filter(Boolean);
-    void (async () => {
-        for (const u of sfxOnly) {
+    if (!ctx) return Promise.resolve();
+    const queue = [...new Set(urls)].filter((u) => u && !sfxAudioBufferByUrl.has(u));
+    if (!queue.length) return Promise.resolve();
+    let idx = 0;
+    const worker = async () => {
+        while (idx < queue.length) {
+            const u = queue[idx++];
             try {
                 await ensureSfxAudioBuffer(ctx, u);
             } catch (_) {}
-            await new Promise((r) => setTimeout(r, 16));
         }
-    })();
+    };
+    const n = Math.max(1, Math.min(concurrency, queue.length));
+    return Promise.all(Array.from({ length: n }, () => worker()));
 }
 
-/** Ранняя загрузка/декод mp3 — иначе первый рез на проде ждёт сеть/декодер */
+/** Звуки, нужные конкретному уровню в текущем языке (срезы + озвучка режима) — для приоритетного прогрева */
+function currentLevelSfxUrls(cfg) {
+    const urls = [...SLICE_SFX_FALLBACK_POOL];
+    if (cfg?.mode === 'fruit') {
+        for (const e of Object.keys(spawnVoiceUrlByEmoji)) {
+            urls.push(spawnVoiceUrlResolve(e));
+        }
+    } else if (cfg?.mode === 'letter') {
+        const map = uiLang === 'en' ? enLetterSpawnUrlByLower : ruLetterSpawnUrlByLower;
+        urls.push(...Object.values(map));
+    } else if (cfg?.mode === 'number') {
+        const map = uiLang === 'en' ? enNumberSpawnUrlByKey : ruNumberSpawnUrlByKey;
+        urls.push(...Object.values(map));
+    }
+    return urls.filter(Boolean);
+}
+
+/** Все sfx, но с текущим языком первым — фоновой прогрев на загрузке */
+function allSfxUrlsCurrentLangFirst() {
+    const curLang =
+        uiLang === 'en'
+            ? [
+                  ...Object.values(enLetterSpawnUrlByLower),
+                  ...Object.values(enNumberSpawnUrlByKey),
+                  ...Object.values(enSpawnVoiceUrlByStem)
+              ]
+            : [
+                  ...Object.values(ruLetterSpawnUrlByLower),
+                  ...Object.values(ruNumberSpawnUrlByKey),
+                  ...Object.values(spawnVoiceUrlByEmoji)
+              ];
+    const rest = [
+        ...Object.values(spawnVoiceUrlByEmoji),
+        ...Object.values(enSpawnVoiceUrlByStem),
+        ...Object.values(ruLetterSpawnUrlByLower),
+        ...Object.values(enLetterSpawnUrlByLower),
+        ...Object.values(ruNumberSpawnUrlByKey),
+        ...Object.values(enNumberSpawnUrlByKey)
+    ];
+    return [...new Set([...SLICE_SFX_FALLBACK_POOL, ...curLang, ...rest])].filter(Boolean);
+}
+
+function warmSfxAudioBuffersYielding() {
+    /** Срезы и звуки текущего языка — первыми; общий список идёт скромной параллелью, чтобы не дёргать загрузку */
+    void warmSfxBuffers(allSfxUrlsCurrentLangFirst(), 4);
+}
+
+/** Ранняя загрузка/декод mp3 — иначе первый рез/озвучка на проде ждёт сеть/декодер */
 function preloadGameAudio() {
     if (soundEffectsEnabled) {
-        const sfxUrls = [
-            ...new Set([
-                ...Object.values(sliceSoundUrlByEmoji),
-                ...Object.values(spawnVoiceUrlByEmoji),
-                ...Object.values(enSpawnVoiceUrlByStem),
-                ...Object.values(ruLetterSpawnUrlByLower),
-                ...Object.values(enLetterSpawnUrlByLower),
-                ...Object.values(ruNumberSpawnUrlByKey),
-                ...Object.values(enNumberSpawnUrlByKey)
-            ])
-        ].filter(Boolean);
-        for (const u of sfxUrls) preloadHtmlAudioUrl(u);
+        /** Декодируем сразу в буферы (fetch внутри ensureSfxAudioBuffer прогреет и HTTP-кэш).
+         *  Сотни new Audio() на iOS не плодим — там лимит на медиа-элементы. */
         warmSfxAudioBuffersYielding();
     }
     if (musicEnabled) {
@@ -786,6 +823,8 @@ function startLevel(levelIndex) {
     tryUnlockAudioOnUserGesture();
     currentLevelIndex = Math.max(0, Math.min(LEVELS.length - 1, levelIndex));
     const cfg = getCurrentLevelConfig();
+    /** Приоритетно декодируем озвучку именно этого уровня и языка — чтобы звук был с первого спавна */
+    if (soundEffectsEnabled) void warmSfxBuffers(currentLevelSfxUrls(cfg), 8);
     score = 0;
     scoreDisplay.innerText = formatScore(score);
     levelDisplay.textContent = formatHudLevelLine(currentLevelIndex, cfg.maxConcurrent);
