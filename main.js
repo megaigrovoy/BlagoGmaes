@@ -243,6 +243,41 @@ const enWordUrlByText = Object.fromEntries(
     ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.MP3$/i, '').toLowerCase(), href])
 );
 
+/** Картинка слова (режим слов) — имя файла = слово: кот.png / cat.png (images/words/ru|en, png|jpg|jpeg|webp) */
+const ruWordImageByText = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/images/words/ru/*.{png,jpg,jpeg,webp,PNG,JPG,JPEG,WEBP}', {
+            eager: true,
+            query: '?url',
+            import: 'default'
+        })
+    ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.[^.]+$/, '').toLowerCase(), href])
+);
+const enWordImageByText = Object.fromEntries(
+    Object.entries(
+        import.meta.glob('./src/assets/images/words/en/*.{png,jpg,jpeg,webp,PNG,JPG,JPEG,WEBP}', {
+            eager: true,
+            query: '?url',
+            import: 'default'
+        })
+    ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.[^.]+$/, '').toLowerCase(), href])
+);
+
+function wordImageUrl(word) {
+    if (!word) return null;
+    const map = uiLang === 'en' ? enWordImageByText : ruWordImageByText;
+    return map[String(word).toLowerCase()] || null;
+}
+
+/** Прогрев картинок слов текущего языка — чтобы первый показ был без задержки */
+function preloadWordImages() {
+    const map = uiLang === 'en' ? enWordImageByText : ruWordImageByText;
+    for (const u of Object.values(map)) {
+        const im = new Image();
+        im.src = u;
+    }
+}
+
 function pickRandomUrl(arr) {
     return arr && arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
 }
@@ -654,6 +689,10 @@ const levelDisplay = document.getElementById('level-display');
 const btnBackMenu = document.getElementById('btn-back-menu');
 const comboDisplay = document.getElementById('combo-display');
 const wordProgressEl = document.getElementById('word-progress');
+const wordRevealEl = document.getElementById('word-reveal');
+const wordRevealImg = document.getElementById('word-reveal-img');
+const wordRevealEmoji = document.getElementById('word-reveal-emoji');
+const wordRevealText = document.getElementById('word-reveal-text');
 const winOverlay = document.getElementById('win-overlay');
 const winStarsEl = document.getElementById('win-stars');
 const winTitleEl = document.getElementById('win-title');
@@ -702,8 +741,28 @@ function comboMultiplier() {
 }
 
 /** Детские слова по языку UI (3–4 буквы). Имя звукового файла = слово в нижнем регистре. */
-const WORD_LIST_RU = ['КОТ', 'ДОМ', 'МАМА', 'СОК', 'МЯЧ', 'СЫР'];
-const WORD_LIST_EN = ['CAT', 'DOG', 'SUN', 'MOM', 'CUP', 'BED'];
+const WORD_LIST_RU = [
+    'КОТ', 'ДОМ', 'МАМА', 'СОК', 'МЯЧ', 'СЫР',
+    'ПАПА', 'ЛИСА', 'РЫБА', 'СОВА', 'ГРИБ', 'ШАР'
+];
+const WORD_LIST_EN = [
+    'CAT', 'DOG', 'SUN', 'MOM', 'CUP', 'BED',
+    'PIG', 'COW', 'BUS', 'HAT', 'FOX', 'FISH'
+];
+
+/** Эмодзи для показа собранного слова (как у фруктов). Ключ — слово в верхнем регистре. */
+const WORD_EMOJI = {
+    // RU
+    'КОТ': '🐱', 'ДОМ': '🏠', 'МАМА': '👩', 'СОК': '🧃', 'МЯЧ': '⚽', 'СЫР': '🧀',
+    'ПАПА': '👨', 'ЛИСА': '🦊', 'РЫБА': '🐟', 'СОВА': '🦉', 'ГРИБ': '🍄', 'ШАР': '🎈',
+    // EN
+    'CAT': '🐱', 'DOG': '🐶', 'SUN': '☀️', 'MOM': '👩', 'CUP': '☕', 'BED': '🛏️',
+    'PIG': '🐷', 'COW': '🐮', 'BUS': '🚌', 'HAT': '🎩', 'FOX': '🦊', 'FISH': '🐟'
+};
+
+function wordEmoji(word) {
+    return word ? WORD_EMOJI[String(word).toUpperCase()] || null : null;
+}
 
 function wordListForUiLang() {
     return uiLang === 'en' ? WORD_LIST_EN : WORD_LIST_RU;
@@ -715,6 +774,10 @@ let wordQueueIndex = 0;
 let currentWord = '';
 let wordProgress = 0;
 let wordsCompleted = 0;
+/** Пауза с показом картинки собранного слова */
+let wordRevealActive = false;
+let wordRevealTimer = 0;
+const WORD_REVEAL_MS = 2000;
 
 function resetWordState() {
     wordQueue = [...wordListForUiLang()];
@@ -731,11 +794,11 @@ function advanceToNextWord() {
     wordProgress = 0;
 }
 
-/** Какую букву выдать в режиме слов: чаще — нужную следующую, иначе случайный отвлекающий символ */
+/** В режиме слов выпадает только следующая нужная буква — без отвлекающих, чтобы не путать детей */
 function pickWordSpawnChar() {
-    const alphabet = letterAlphabetForUiLang();
     const need = currentWord[wordProgress];
-    if (need && Math.random() < 0.55) return need;
+    if (need) return need;
+    const alphabet = letterAlphabetForUiLang();
     return alphabet[Math.floor(Math.random() * alphabet.length)];
 }
 
@@ -854,6 +917,47 @@ function updateWordHud() {
     }
 }
 
+function showWordReveal(word) {
+    if (!wordRevealEl) return;
+    /** Приоритет — картинка (если положили файл), иначе подходящий эмодзи */
+    const url = wordImageUrl(word);
+    const emoji = url ? null : wordEmoji(word);
+    if (wordRevealImg) {
+        if (url) {
+            wordRevealImg.src = url;
+            wordRevealImg.alt = word;
+            wordRevealImg.classList.remove('is-hidden');
+        } else {
+            wordRevealImg.removeAttribute('src');
+            wordRevealImg.classList.add('is-hidden');
+        }
+    }
+    if (wordRevealEmoji) {
+        if (emoji) {
+            wordRevealEmoji.textContent = emoji;
+            wordRevealEmoji.classList.remove('is-hidden');
+        } else {
+            wordRevealEmoji.textContent = '';
+            wordRevealEmoji.classList.add('is-hidden');
+        }
+    }
+    if (wordRevealText) wordRevealText.textContent = word;
+    wordRevealEl.classList.remove('is-hidden');
+}
+
+function hideWordReveal() {
+    wordRevealEl?.classList.add('is-hidden');
+}
+
+function clearWordReveal() {
+    if (wordRevealTimer) {
+        clearTimeout(wordRevealTimer);
+        wordRevealTimer = 0;
+    }
+    wordRevealActive = false;
+    hideWordReveal();
+}
+
 function onWordCompleted(fruit) {
     wordsCompleted += 1;
     playWordSound(currentWord);
@@ -861,13 +965,28 @@ function onWordCompleted(fruit) {
     score += 50 * comboMultiplier();
     scoreDisplay.innerText = formatScore(score);
     screenFlash = Math.max(screenFlash, 0.28);
+
+    /** Пауза: показываем картинку собранного слова, спавн/рез на это время выключены */
     const cfg = getCurrentLevelConfig();
-    if (wordsCompleted >= (cfg.wordGoal || 3)) {
-        completeLevel();
-    } else {
+    const isLast = wordsCompleted >= (cfg.wordGoal || 3);
+    const finishedWord = currentWord;
+    wordRevealActive = true;
+    showWordReveal(finishedWord);
+    if (wordRevealTimer) clearTimeout(wordRevealTimer);
+    wordRevealTimer = setTimeout(() => {
+        wordRevealTimer = 0;
+        wordRevealActive = false;
+        hideWordReveal();
+        if (isLast) {
+            completeLevel();
+            return;
+        }
+        /** Чистим оставшиеся буквы предыдущего слова — следующее начинаем «с нуля» */
+        fruits.length = 0;
         advanceToNextWord();
         updateWordHud();
-    }
+        lastSpawnTime = Date.now();
+    }, WORD_REVEAL_MS);
 }
 
 function checkLevelGoal() {
@@ -1186,6 +1305,7 @@ function showMainMenu() {
     isPlaying = false;
     levelComplete = false;
     stopGameMusic();
+    clearWordReveal();
     hideWinOverlay();
     comboDisplay?.classList.add('is-hidden');
     wordProgressEl?.classList.add('is-hidden');
@@ -1225,6 +1345,7 @@ function startLevel(levelIndex) {
     levelBadEvents = 0;
     levelComplete = false;
     winBurstTimer = 0;
+    clearWordReveal();
     hideWinOverlay();
     comboDisplay?.classList.add('is-hidden');
     if (cfg.mode === 'number') sequentialSpawnNumber = 1;
@@ -1232,6 +1353,7 @@ function startLevel(levelIndex) {
     if (cfg.mode === 'word') {
         resetWordState();
         updateWordHud();
+        preloadWordImages();
     } else {
         wordProgressEl?.classList.add('is-hidden');
     }
@@ -2912,7 +3034,9 @@ function gameLoop(nowTime) {
     // Update and draw fruits
     const now = Date.now();
     const unslicedCount = fruits.filter((f) => !f.isSliced).length;
-    if (!levelComplete && now - lastSpawnTime >= levelCfg.spawnIntervalMs && unslicedCount < levelCfg.maxConcurrent) {
+    /** В режиме слов — строго одна нужная буква на экране, чтобы ребёнок видел ровно ту, что нужна */
+    const effectiveMaxConcurrent = levelCfg.mode === 'word' ? 1 : levelCfg.maxConcurrent;
+    if (!levelComplete && !wordRevealActive && now - lastSpawnTime >= levelCfg.spawnIntervalMs && unslicedCount < effectiveMaxConcurrent) {
         fruits.push(new Fruit());
         lastSpawnTime = now;
     }
@@ -2939,7 +3063,7 @@ function gameLoop(nowTime) {
                     fruit._wasTouchingHand = false;
                 }
             }
-            const cutStroke = !levelComplete && pathIntersectsFruit && !fruit._wasTouchingHand;
+            const cutStroke = !levelComplete && !wordRevealActive && pathIntersectsFruit && !fruit._wasTouchingHand;
             if (pathIntersectsFruit) {
                 fruit._wasTouchingHand = true;
             }
