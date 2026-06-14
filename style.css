@@ -796,28 +796,28 @@ canvas {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.8rem;
-  padding: 1.4rem;
-  border-radius: 26px;
+  gap: 0.55rem;
+  padding: 1rem 1.2rem;
+  border-radius: 20px;
   background: rgba(15, 15, 22, 0.86);
   border: 1px solid rgba(0, 243, 255, 0.4);
-  box-shadow: 0 0 44px rgba(0, 243, 255, 0.45);
+  box-shadow: 0 0 32px rgba(0, 243, 255, 0.4);
   animation: word-reveal-pop 0.4s cubic-bezier(0.2, 1.4, 0.5, 1) both;
 }
 
 @keyframes word-reveal-pop {
   0% { transform: scale(0.4); opacity: 0; }
-  60% { transform: scale(1.08); opacity: 1; }
+  60% { transform: scale(1.06); opacity: 1; }
   100% { transform: scale(1); opacity: 1; }
 }
 
 .word-reveal-img {
-  width: min(46vh, 70vw);
-  height: min(46vh, 70vw);
-  max-width: 420px;
-  max-height: 420px;
+  width: min(32vh, 50vw);
+  height: min(32vh, 50vw);
+  max-width: 280px;
+  max-height: 280px;
   object-fit: contain;
-  border-radius: 18px;
+  border-radius: 14px;
 }
 
 .word-reveal-img.is-hidden {
@@ -825,9 +825,9 @@ canvas {
 }
 
 .word-reveal-emoji {
-  font-size: min(40vh, 60vw);
+  font-size: min(28vh, 42vw);
   line-height: 1;
-  filter: drop-shadow(0 0 22px rgba(0, 243, 255, 0.5));
+  filter: drop-shadow(0 0 16px rgba(0, 243, 255, 0.5));
 }
 
 .word-reveal-emoji.is-hidden {
@@ -835,11 +835,11 @@ canvas {
 }
 
 .word-reveal-text {
-  font-size: clamp(2rem, 7vh, 3.6rem);
+  font-size: clamp(1.5rem, 5vh, 2.6rem);
   font-weight: 900;
   letter-spacing: 0.08em;
   color: var(--neon-cyan);
-  text-shadow: 0 0 18px var(--neon-cyan), 0 0 34px rgba(0, 243, 255, 0.6);
+  text-shadow: 0 0 14px var(--neon-cyan), 0 0 26px rgba(0, 243, 255, 0.55);
 }
 
 /* --- Экран победы --- */
