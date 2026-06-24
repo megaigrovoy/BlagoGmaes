@@ -748,7 +748,14 @@ const WORD_LIST_RU = [
     'КИТ', 'ЗМЕЯ', 'ПЧЕЛА', 'КОЗА', 'ОВЦА', 'КРАБ',
     'АКУЛА', 'ЛУНА', 'ВОДА', 'СНЕГ', 'РОЗА', 'ЛИМОН',
     'БАНАН', 'АРБУЗ', 'ТОРТ', 'ХЛЕБ', 'ПИЦЦА', 'МАШИНА',
-    'ПОЕЗД', 'ЛОДКА', 'РАКЕТА', 'КЛЮЧ', 'КНИГА', 'ЦВЕТОК'
+    'ПОЕЗД', 'ЛОДКА', 'РАКЕТА', 'КЛЮЧ', 'КНИГА', 'ЦВЕТОК',
+    'ПАУК', 'МЫШЬ', 'СОБАКА', 'ПТИЦА', 'КОРОВА', 'МЕДВЕДЬ',
+    'ЛОШАДЬ', 'КУРИЦА', 'НОС', 'РОТ', 'ГЛАЗ', 'УХО',
+    'РУКА', 'НОГА', 'СОЛНЦЕ', 'ДОЖДЬ', 'ОБЛАКО', 'ЗВЕЗДА',
+    'ОГОНЬ', 'РАДУГА', 'СТУЛ', 'ОКНО', 'САМОЛЁТ', 'ЗОНТ',
+    'МОЛОКО', 'ЯЙЦО', 'МЁД', 'МОРЕ', 'РЕКА', 'ЗАМОК',
+    'МОСТ', 'ДЕРЕВО', 'ЯБЛОКО', 'ГРУША', 'МОРКОВЬ', 'СУП',
+    'САХАР', 'ЧАШКА', 'ТАРЕЛКА', 'ЛОЖКА', 'ВИЛКА', 'НОЖ'
 ];
 const WORD_LIST_EN = [
     'CAT', 'DOG', 'SUN', 'MOM', 'CUP', 'BED',
@@ -757,7 +764,14 @@ const WORD_LIST_EN = [
     'BEE', 'ANT', 'OWL', 'HEN', 'GOAT', 'LAMB',
     'CRAB', 'WHALE', 'SNAKE', 'STAR', 'MOON', 'RAIN',
     'SNOW', 'TREE', 'ROSE', 'APPLE', 'BANANA', 'LEMON',
-    'CAKE', 'PIZZA', 'CAR', 'BOAT', 'KEY', 'BOOK'
+    'CAKE', 'PIZZA', 'CAR', 'BOAT', 'KEY', 'BOOK',
+    'MOUSE', 'HORSE', 'CHICK', 'SPIDER', 'EAGLE', 'DEER',
+    'CLOUD', 'FIRE', 'HEART', 'HAND', 'FOOT', 'NOSE',
+    'EAR', 'EYE', 'PLANE', 'TRAIN', 'BIKE', 'TRUCK',
+    'SHIP', 'MILK', 'EGG', 'HONEY', 'SOUP', 'CORN',
+    'BEAN', 'CHAIR', 'DOOR', 'LAMP', 'BELL', 'BALL',
+    'DOLL', 'SEA', 'HILL', 'SAND', 'ROCK', 'LEAF',
+    'WIND', 'JUICE', 'ICE', 'TOYS', 'SOCK', 'SHOE'
 ];
 
 /** Эмодзи для показа собранного слова (как у фруктов). Ключ — слово в верхнем регистре. */
@@ -770,6 +784,13 @@ const WORD_EMOJI = {
     'АКУЛА': '🦈', 'ЛУНА': '🌙', 'ВОДА': '💧', 'СНЕГ': '❄️', 'РОЗА': '🌹', 'ЛИМОН': '🍋',
     'БАНАН': '🍌', 'АРБУЗ': '🍉', 'ТОРТ': '🎂', 'ХЛЕБ': '🍞', 'ПИЦЦА': '🍕', 'МАШИНА': '🚗',
     'ПОЕЗД': '🚆', 'ЛОДКА': '⛵', 'РАКЕТА': '🚀', 'КЛЮЧ': '🔑', 'КНИГА': '📚', 'ЦВЕТОК': '🌸',
+    'ПАУК': '🕷️', 'МЫШЬ': '🐭', 'СОБАКА': '🐶', 'ПТИЦА': '🐦', 'КОРОВА': '🐄', 'МЕДВЕДЬ': '🐻',
+    'ЛОШАДЬ': '🐴', 'КУРИЦА': '🐔', 'НОС': '👃', 'РОТ': '👄', 'ГЛАЗ': '👁️', 'УХО': '👂',
+    'РУКА': '✋', 'НОГА': '🦵', 'СОЛНЦЕ': '☀️', 'ДОЖДЬ': '🌧️', 'ОБЛАКО': '☁️', 'ЗВЕЗДА': '⭐',
+    'ОГОНЬ': '🔥', 'РАДУГА': '🌈', 'СТУЛ': '🪑', 'ОКНО': '🪟', 'САМОЛЁТ': '✈️', 'ЗОНТ': '☂️',
+    'МОЛОКО': '🥛', 'ЯЙЦО': '🥚', 'МЁД': '🍯', 'МОРЕ': '🌊', 'РЕКА': '🏞️', 'ЗАМОК': '🏰',
+    'МОСТ': '🌉', 'ДЕРЕВО': '🌳', 'ЯБЛОКО': '🍎', 'ГРУША': '🍐', 'МОРКОВЬ': '🥕', 'СУП': '🍲',
+    'САХАР': '🍬', 'ЧАШКА': '☕', 'ТАРЕЛКА': '🍽️', 'ЛОЖКА': '🥄', 'ВИЛКА': '🍴', 'НОЖ': '🔪',
     // EN
     'CAT': '🐱', 'DOG': '🐶', 'SUN': '☀️', 'MOM': '👩', 'CUP': '☕', 'BED': '🛏️',
     'PIG': '🐷', 'COW': '🐮', 'BUS': '🚌', 'HAT': '🎩', 'FOX': '🦊', 'FISH': '🐟',
@@ -777,7 +798,14 @@ const WORD_EMOJI = {
     'BEE': '🐝', 'ANT': '🐜', 'OWL': '🦉', 'HEN': '🐔', 'GOAT': '🐐', 'LAMB': '🐑',
     'CRAB': '🦀', 'WHALE': '🐳', 'SNAKE': '🐍', 'STAR': '⭐', 'MOON': '🌙', 'RAIN': '🌧️',
     'SNOW': '❄️', 'TREE': '🌳', 'ROSE': '🌹', 'APPLE': '🍎', 'BANANA': '🍌', 'LEMON': '🍋',
-    'CAKE': '🎂', 'PIZZA': '🍕', 'CAR': '🚗', 'BOAT': '⛵', 'KEY': '🔑', 'BOOK': '📚'
+    'CAKE': '🎂', 'PIZZA': '🍕', 'CAR': '🚗', 'BOAT': '⛵', 'KEY': '🔑', 'BOOK': '📚',
+    'MOUSE': '🐭', 'HORSE': '🐴', 'CHICK': '🐤', 'SPIDER': '🕷️', 'EAGLE': '🦅', 'DEER': '🦌',
+    'CLOUD': '☁️', 'FIRE': '🔥', 'HEART': '❤️', 'HAND': '✋', 'FOOT': '🦶', 'NOSE': '👃',
+    'EAR': '👂', 'EYE': '👁️', 'PLANE': '✈️', 'TRAIN': '🚂', 'BIKE': '🚲', 'TRUCK': '🚚',
+    'SHIP': '🚢', 'MILK': '🥛', 'EGG': '🥚', 'HONEY': '🍯', 'SOUP': '🍲', 'CORN': '🌽',
+    'BEAN': '🫘', 'CHAIR': '🪑', 'DOOR': '🚪', 'LAMP': '💡', 'BELL': '🔔', 'BALL': '⚽',
+    'DOLL': '🪆', 'SEA': '🌊', 'HILL': '⛰️', 'SAND': '🏖️', 'ROCK': '🪨', 'LEAF': '🍃',
+    'WIND': '💨', 'JUICE': '🧃', 'ICE': '🧊', 'TOYS': '🧸', 'SOCK': '🧦', 'SHOE': '👟'
 };
 
 function wordEmoji(word) {
@@ -1102,9 +1130,9 @@ const LEVELS = [
     { mode: 'number', maxConcurrent: 1, spawnIntervalMs: 2200, goal: 10 },
     { mode: 'number', maxConcurrent: 2, spawnIntervalMs: 1900, goal: 14 },
     { mode: 'number', maxConcurrent: 3, spawnIntervalMs: 1550, goal: 18 },
-    { mode: 'word', maxConcurrent: 3, spawnIntervalMs: 1500, wordGoal: 3 },
-    { mode: 'word', maxConcurrent: 4, spawnIntervalMs: 1350, wordGoal: 4 },
-    { mode: 'word', maxConcurrent: 4, spawnIntervalMs: 1200, wordGoal: 5 }
+    { mode: 'word', maxConcurrent: 3, spawnIntervalMs: 1500, wordGoal: 10 },
+    { mode: 'word', maxConcurrent: 4, spawnIntervalMs: 1350, wordGoal: 14 },
+    { mode: 'word', maxConcurrent: 4, spawnIntervalMs: 1200, wordGoal: 18 }
 ];
 
 /** Кадров подряд без пересечения с предметом, чтобы снова считать «новый вход» (трекинг мерцает на границе круга) */
