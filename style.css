@@ -191,6 +191,36 @@ canvas {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.menu-games-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  margin-top: 0.38rem;
+  padding: 0.48rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-decoration: none;
+  text-align: center;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.menu-games-link:hover {
+  border-color: var(--neon-cyan);
+  background: rgba(0, 243, 255, 0.1);
+  box-shadow: 0 0 12px rgba(0, 243, 255, 0.28);
+}
+
+.menu-games-link-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
 .menu-quick-settings .menu-option-toggle--compact {
   margin-bottom: 0;
   padding: 0.34rem 0.38rem;

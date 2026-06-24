@@ -1143,6 +1143,8 @@ const I18N = {
         quickSettingsAria: 'Язык, звук, музыка и число игроков',
         langLabel: 'Язык',
         playersOnCamera: 'Количество игроков',
+        gamesGallery: 'Галерея игр',
+        gamesGalleryAria: 'Перейти в галерею игр Blago Games',
         playersOneAria: 'Один игрок',
         playersTwoAria: 'Два игрока',
         soundInGame: 'Звуки в игре',
@@ -1191,6 +1193,8 @@ const I18N = {
         quickSettingsAria: 'Language, sound, music and number of players',
         langLabel: 'Language',
         playersOnCamera: 'Number of players',
+        gamesGallery: 'Game gallery',
+        gamesGalleryAria: 'Go to Blago Games gallery',
         playersOneAria: 'One player',
         playersTwoAria: 'Two players',
         soundInGame: 'Game sounds',
@@ -1302,6 +1306,10 @@ function applyUiTranslations() {
     const wpr = document.getElementById('wrap-opt-players-2');
     if (wpl) wpl.setAttribute('aria-label', t('playersOneAria'));
     if (wpr) wpr.setAttribute('aria-label', t('playersTwoAria'));
+    const mgl = document.getElementById('menu-games-gallery-label');
+    const mga = document.getElementById('menu-games-gallery');
+    if (mgl) mgl.textContent = t('gamesGallery');
+    if (mga) mga.setAttribute('aria-label', t('gamesGalleryAria'));
     const st = document.getElementById('menu-opt-sound-title');
     if (st) st.textContent = t('soundInGame');
     const mt = document.getElementById('menu-opt-music-title');
