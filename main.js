@@ -1106,9 +1106,8 @@ function showWinOverlay(stars) {
     }
     if (winTitleEl) winTitleEl.textContent = t('winTitle');
     if (winScoreEl) winScoreEl.textContent = `${t('winScoreLabel')}: ${score} · ${t('comboMax')}: ${comboBest}`;
-    const hasNext = currentLevelIndex < LEVELS.length - 1;
     if (btnWinNext) {
-        btnWinNext.textContent = hasNext ? t('winNextLevel') : t('winReplay');
+        btnWinNext.textContent = t('winNextLevel');
         btnWinNext.classList.remove('is-hidden');
     }
     if (btnWinMenu) btnWinMenu.textContent = t('winToMenu');
@@ -1140,6 +1139,29 @@ const CONTACT_EXIT_DEBOUNCE_FRAMES = 7;
 /** Штраф за предмет, улетевший вниз несрезанным (симметрично +10 за рез) */
 const MISS_PENALTY = 10;
 let currentLevelIndex = 0;
+let selectedGameMode = 'fruit';
+const MENU_GAME_MODES = ['fruit', 'number', 'word'];
+
+function levelIndicesForMode(mode) {
+    const out = [];
+    for (let i = 0; i < LEVELS.length; i++) {
+        if (LEVELS[i].mode === mode) out.push(i);
+    }
+    return out;
+}
+
+function firstLevelIndexForMode(mode) {
+    const list = levelIndicesForMode(mode);
+    return list.length ? list[0] : 0;
+}
+
+function nextLevelIndexInsideMode(currentIndex, mode) {
+    const list = levelIndicesForMode(mode);
+    if (!list.length) return 0;
+    const at = list.indexOf(currentIndex);
+    if (at < 0) return list[0];
+    return list[(at + 1) % list.length];
+}
 
 function getCurrentLevelConfig() {
     return LEVELS[currentLevelIndex];
@@ -1166,8 +1188,8 @@ const I18N = {
         praiseCombo: 'Серия',
         hudGoal: 'Цель',
         scorePrefix: 'Счёт: ',
-        menuHeading: 'Выберите уровень',
-        menuHint: 'Чем выше уровень в категории (1→3), тем больше предметов одновременно на экране.',
+        menuHeading: 'Выберите тип игры',
+        menuHint: 'Сложность внутри выбранного типа меняется автоматически: 1 → 2 → 3.',
         quickSettingsAria: 'Язык, звук, музыка и число игроков',
         langLabel: 'Язык',
         playersOnCamera: 'Количество игроков',
@@ -1216,8 +1238,8 @@ const I18N = {
         praiseCombo: 'Combo',
         hudGoal: 'Goal',
         scorePrefix: 'Score: ',
-        menuHeading: 'Choose a level',
-        menuHint: 'Within each category (1→3), higher tiers mean more objects at once.',
+        menuHeading: 'Choose game type',
+        menuHint: 'Difficulty inside the selected type progresses automatically: 1 → 2 → 3.',
         quickSettingsAria: 'Language, sound, music and number of players',
         langLabel: 'Language',
         playersOnCamera: 'Number of players',
@@ -1301,12 +1323,18 @@ function formatScore(n) {
 function buildLevelGrid() {
     if (!levelGrid) return;
     levelGrid.innerHTML = '';
-    LEVELS.forEach((cfg, i) => {
+    MENU_GAME_MODES.forEach((mode) => {
+        const i = firstLevelIndexForMode(mode);
+        const cfg = LEVELS[i];
+        if (!cfg) return;
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'level-btn';
-        btn.innerHTML = `<span class="level-title">${levelTierTitle(i)}</span>`;
-        btn.addEventListener('click', () => startLevel(i));
+        btn.innerHTML = `<span class="level-title">${levelTierTitle(i).replace(/\s+\d+$/, '')}</span>`;
+        btn.addEventListener('click', () => {
+            selectedGameMode = mode;
+            startLevel(firstLevelIndexForMode(mode));
+        });
         levelGrid.appendChild(btn);
     });
 }
@@ -1394,6 +1422,7 @@ function startLevel(levelIndex) {
     tryUnlockAudioOnUserGesture();
     currentLevelIndex = Math.max(0, Math.min(LEVELS.length - 1, levelIndex));
     const cfg = getCurrentLevelConfig();
+    selectedGameMode = cfg.mode || selectedGameMode;
     /** Приоритетно декодируем озвучку именно этого уровня и языка — чтобы звук был с первого спавна */
     if (soundEffectsEnabled) void warmSfxBuffers(currentLevelSfxUrls(cfg), 8);
     score = 0;
@@ -1441,8 +1470,7 @@ btnBackMenu.addEventListener('click', () => showMainMenu());
 btnWinNext?.addEventListener('click', () => {
     tryUnlockAudioOnUserGesture();
     hideWinOverlay();
-    const hasNext = currentLevelIndex < LEVELS.length - 1;
-    startLevel(hasNext ? currentLevelIndex + 1 : currentLevelIndex);
+    startLevel(nextLevelIndexInsideMode(currentLevelIndex, selectedGameMode));
 });
 
 btnWinMenu?.addEventListener('click', () => {
