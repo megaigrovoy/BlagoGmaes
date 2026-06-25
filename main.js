@@ -1514,7 +1514,7 @@ mainMenu.addEventListener(
     (e) => {
         if (isPlaying) return;
         tryUnlockAudioOnUserGesture();
-        if (e.target?.closest?.('.menu-fs-stack')) return;
+        if (e.target?.closest?.('.menu-main-controls')) return;
         if (e.target?.closest?.('.level-btn')) return;
         if (e.target?.closest?.('.menu-player-row')) return;
         playMenuMusic();
