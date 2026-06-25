@@ -692,30 +692,59 @@ canvas {
 @media (min-width: 700px) {
   .menu-quick-settings {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1.08fr 1fr;
     grid-template-areas:
       "audio lang"
       "audio players";
     column-gap: 0.48rem;
     row-gap: 0.45rem;
+    align-items: stretch;
+  }
+
+  .menu-quick-settings .menu-quick-audio,
+  .menu-quick-settings .menu-lang-row,
+  .menu-quick-settings > .menu-player-row:not(.menu-lang-row) {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
   }
 
   .menu-quick-settings .menu-lang-row {
     grid-area: lang;
     margin-bottom: 0;
-    padding: 0.22rem 0.18rem;
+    padding: 0.35rem 0.3rem;
+    justify-content: center;
   }
 
   .menu-quick-settings .menu-quick-audio {
     grid-area: audio;
     gap: 0.3rem;
+    padding: 0.35rem 0.32rem;
+    justify-content: center;
   }
 
   .menu-quick-settings > .menu-player-row:not(.menu-lang-row) {
     grid-area: players;
     margin-top: 0;
-    padding-top: 0.22rem;
+    padding: 0.35rem 0.3rem;
     border-top: none;
+    justify-content: center;
+  }
+
+  .menu-quick-settings .menu-player-label {
+    margin-bottom: 0.26rem;
+    letter-spacing: 0.03em;
+  }
+
+  .menu-quick-settings .menu-option-toggle--compact {
+    min-height: 42px;
+  }
+
+  .menu-quick-settings .menu-player-segment--compact .menu-player-pill span {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 }
 
