@@ -42,7 +42,6 @@ canvas {
   top: 0;
   left: 0;
   display: block;
-  visibility: hidden;
   /* width/height заданы в JS = размеру буфера, без растягивания по 100vh */
   /* Mirror the canvas so it feels like a mirror */
   transform: scaleX(-1);
@@ -167,13 +166,6 @@ canvas {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55rem;
-}
-
-.menu-main-actions .btn-fullscreen,
-.menu-main-actions .menu-games-link {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .menu-quick-settings .menu-lang-row {
@@ -328,7 +320,7 @@ canvas {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   /* Полностью без backdrop-filter — на Windows+Chrome размытие часто даёт рывки при hover соседей */
-  background: rgba(8, 8, 12, 1);
+  background: rgba(8, 8, 12, 0.94);
 }
 
 .menu-overlay.is-hidden {
@@ -378,9 +370,6 @@ canvas {
   font-size: 0.78rem;
   opacity: 0.65;
   margin-bottom: 0.55rem;
-  max-width: min(460px, 92%);
-  margin-left: auto;
-  margin-right: auto;
   line-height: 1.4;
 }
 
