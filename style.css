@@ -170,6 +170,21 @@ canvas {
   font-size: 0.82rem;
 }
 
+.menu-quick-settings .menu-player-segment--compact {
+  gap: 0.35rem;
+}
+
+.menu-quick-settings .menu-player-segment--compact .menu-player-pill {
+  flex: 1;
+}
+
+.menu-quick-settings .menu-player-segment--compact .menu-player-pill span {
+  min-width: 0;
+  padding: 0.4rem 0.2rem;
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
+}
+
 .menu-quick-settings .menu-quick-audio {
   display: flex;
   flex-direction: column;
