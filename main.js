@@ -683,7 +683,7 @@ const canvasCtx = canvasElement.getContext('2d');
 const scoreDisplay = document.getElementById('score-display');
 const loadingElement = document.getElementById('loading');
 const mainMenu = document.getElementById('main-menu');
-const btnStartGame = document.getElementById('btn-start-game');
+const levelGrid = document.getElementById('level-grid');
 const hudGame = document.getElementById('hud-game');
 const levelDisplay = document.getElementById('level-display');
 const btnBackMenu = document.getElementById('btn-back-menu');
@@ -734,8 +734,6 @@ let floatingTexts = [];
 let screenFlash = 0;
 /** Салют на экране победы */
 let winBurstTimer = 0;
-let autoNextLevelTimer = 0;
-const AUTO_NEXT_LEVEL_MS = 1800;
 
 /** Очко за каждый множитель серии (растёт по мере серии) */
 function comboMultiplier() {
@@ -1096,24 +1094,6 @@ function completeLevel() {
     showWinOverlay(computeStars());
 }
 
-function clearAutoNextLevelTimer() {
-    if (autoNextLevelTimer) {
-        clearTimeout(autoNextLevelTimer);
-        autoNextLevelTimer = 0;
-    }
-}
-
-function scheduleAutoNextLevel() {
-    clearAutoNextLevelTimer();
-    autoNextLevelTimer = setTimeout(() => {
-        autoNextLevelTimer = 0;
-        if (!isPlaying || !levelComplete) return;
-        hideWinOverlay();
-        const hasNext = currentLevelIndex < LEVELS.length - 1;
-        startLevel(hasNext ? currentLevelIndex + 1 : 0);
-    }, AUTO_NEXT_LEVEL_MS);
-}
-
 function showWinOverlay(stars) {
     if (winStarsEl) {
         winStarsEl.innerHTML = '';
@@ -1129,15 +1109,13 @@ function showWinOverlay(stars) {
     const hasNext = currentLevelIndex < LEVELS.length - 1;
     if (btnWinNext) {
         btnWinNext.textContent = hasNext ? t('winNextLevel') : t('winReplay');
-        btnWinNext.classList.add('is-hidden');
+        btnWinNext.classList.remove('is-hidden');
     }
     if (btnWinMenu) btnWinMenu.textContent = t('winToMenu');
     winOverlay?.classList.remove('is-hidden');
-    scheduleAutoNextLevel();
 }
 
 function hideWinOverlay() {
-    clearAutoNextLevelTimer();
     winOverlay?.classList.add('is-hidden');
 }
 
@@ -1188,9 +1166,8 @@ const I18N = {
         praiseCombo: 'Серия',
         hudGoal: 'Цель',
         scorePrefix: 'Счёт: ',
-        menuHeading: 'Режим кампании',
-        menuHint: 'Нажмите «Играть», и уровни пойдут по порядку один за другим.',
-        startGame: 'Играть',
+        menuHeading: 'Выберите уровень',
+        menuHint: 'Чем выше уровень в категории (1→3), тем больше предметов одновременно на экране.',
         quickSettingsAria: 'Язык, звук, музыка и число игроков',
         langLabel: 'Язык',
         playersOnCamera: 'Количество игроков',
@@ -1239,9 +1216,8 @@ const I18N = {
         praiseCombo: 'Combo',
         hudGoal: 'Goal',
         scorePrefix: 'Score: ',
-        menuHeading: 'Campaign mode',
-        menuHint: 'Tap Play to run levels sequentially one after another.',
-        startGame: 'Play',
+        menuHeading: 'Choose a level',
+        menuHint: 'Within each category (1→3), higher tiers mean more objects at once.',
         quickSettingsAria: 'Language, sound, music and number of players',
         langLabel: 'Language',
         playersOnCamera: 'Number of players',
@@ -1322,6 +1298,19 @@ function formatScore(n) {
     return `${t('scorePrefix')}${n}`;
 }
 
+function buildLevelGrid() {
+    if (!levelGrid) return;
+    levelGrid.innerHTML = '';
+    LEVELS.forEach((cfg, i) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'level-btn';
+        btn.innerHTML = `<span class="level-title">${levelTierTitle(i)}</span>`;
+        btn.addEventListener('click', () => startLevel(i));
+        levelGrid.appendChild(btn);
+    });
+}
+
 function setUiLang(lang) {
     if (lang !== 'ru' && lang !== 'en') return;
     uiLang = lang;
@@ -1335,7 +1324,6 @@ function applyUiTranslations() {
     if (mh) mh.textContent = t('menuHeading');
     const hint = document.getElementById('menu-hint');
     if (hint) hint.textContent = t('menuHint');
-    if (btnStartGame) btnStartGame.textContent = t('startGame');
     const mq = document.getElementById('menu-quick-settings');
     if (mq) mq.setAttribute('aria-label', t('quickSettingsAria'));
     const ml = document.getElementById('menu-lang-label');
@@ -1368,6 +1356,7 @@ function applyUiTranslations() {
     if (olru) olru.checked = uiLang === 'ru';
     if (olen) olen.checked = uiLang === 'en';
     syncFullscreenButton();
+    buildLevelGrid();
     if (scoreDisplay) scoreDisplay.innerText = formatScore(isPlaying ? score : 0);
     if (isPlaying) {
         const cfg = getCurrentLevelConfig();
@@ -1448,7 +1437,6 @@ function startLevel(levelIndex) {
 }
 
 btnBackMenu.addEventListener('click', () => showMainMenu());
-btnStartGame?.addEventListener('click', () => startLevel(0));
 
 btnWinNext?.addEventListener('click', () => {
     tryUnlockAudioOnUserGesture();
@@ -1527,7 +1515,7 @@ mainMenu.addEventListener(
         if (isPlaying) return;
         tryUnlockAudioOnUserGesture();
         if (e.target?.closest?.('.menu-main-controls')) return;
-        if (e.target?.closest?.('.btn-start-game')) return;
+        if (e.target?.closest?.('.level-btn')) return;
         if (e.target?.closest?.('.menu-player-row')) return;
         playMenuMusic();
     },
