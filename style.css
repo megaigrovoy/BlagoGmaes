@@ -145,6 +145,23 @@ canvas {
   gap: 0.55rem;
 }
 
+.btn-start-game {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 0.2rem;
+  margin-bottom: 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 900;
+  border-color: rgba(0, 243, 255, 0.55);
+  background: linear-gradient(135deg, rgba(0, 243, 255, 0.22) 0%, rgba(255, 0, 234, 0.12) 100%);
+  box-shadow: 0 0 16px rgba(0, 243, 255, 0.25);
+}
+
+.btn-start-game:hover {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 20px rgba(0, 243, 255, 0.4);
+}
+
 .menu-main-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -712,6 +729,12 @@ canvas {
   .menu-main-controls {
     margin-top: 0.65rem;
     gap: 0.45rem;
+  }
+
+  .btn-start-game {
+    min-height: 42px;
+    font-size: 0.95rem;
+    margin-bottom: 0.25rem;
   }
 
   .menu-main-actions {
