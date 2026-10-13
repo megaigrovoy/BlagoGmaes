@@ -3,3 +3,4 @@ dist/
 public/mediapipe-wasm/
 .DS_Store
 *.local
+public/models/

@@ -1,4 +1,5 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
+import { RtmPoseClient } from './src/rtm/client.js';
 
 /** Совпадает с dependencies в package.json — не @latest, стабильнее кэш CDN */
 const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
@@ -27,6 +28,16 @@ let playerModeCount = loadPlayerCountPreference();
 /** Добавьте ?perf=1 к URL — в консоли раз в ~2.5 с среднее время кадра (поиск фризов на проде) */
 const DEBUG_FRAME_PERF =
     typeof location !== 'undefined' && new URLSearchParams(location.search).get('perf') === '1';
+
+/**
+ * ?pose=rtm — экспериментальный пайплайн YOLOX → ByteTrack/OC-SORT → RTMPose (src/rtm, Web Worker + ONNX Runtime Web).
+ * &rtm=m — RTMPose-m вместо -s. Модели: `npm run fetch:rtm`. Если не поднялся — откат на MediaPipe.
+ */
+const URL_PARAMS = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
+let poseBackend = URL_PARAMS.get('pose') === 'rtm' ? 'rtm' : 'mediapipe';
+const RTM_POSE_MODEL = URL_PARAMS.get('rtm') === 'm' ? 'm' : 's';
+/** @type {RtmPoseClient | null} */
+let rtmClient = null;
 
 /** Профиль трекинга: Android — CPU-делегат, интерполяция 30→120 Гц, мягче пороги (см. mobile-tracking-fix.md) */
 function detectTrackTuning() {
@@ -1755,6 +1766,13 @@ function resetPoseDisplayState() {
 }
 
 async function recreatePoseLandmarker() {
+    if (rtmClient) {
+        rtmClient.setMaxPlayers(playerModeCount === 1 ? 1 : 2);
+        rtmClient.reset();
+        lastVideoTime = -1;
+        resetPoseDisplayState();
+        return;
+    }
     if (!visionTasksResolver) return;
     if (poseLandmarker) {
         try {
@@ -1969,7 +1987,28 @@ async function setupWebcam() {
     throw lastErr ?? new Error("Could not open webcam");
 }
 
+async function initializeRtmPose() {
+    try {
+        rtmClient = new RtmPoseClient({ maxPlayers: playerModeCount === 1 ? 1 : 2, poseModel: RTM_POSE_MODEL });
+        await rtmClient.init();
+        console.info(`[NeonNinjaCat] RTM pose (${RTM_POSE_MODEL}): ${rtmClient.backend}`);
+        return true;
+    } catch (e) {
+        console.warn('[NeonNinjaCat] RTM-пайплайн не поднялся — откат на MediaPipe. Модели: npm run fetch:rtm', e);
+        rtmClient?.worker?.terminate();
+        rtmClient = null;
+        poseBackend = 'mediapipe';
+        return false;
+    }
+}
+
 async function initializeModels() {
+    if (poseBackend === 'rtm' && (await initializeRtmPose())) {
+        preloadGameAudio();
+        loadingElement.classList.remove('visible');
+        showMainMenu();
+        return;
+    }
     let vision;
     const wasmLocal = getMediapipeWasmUrl();
     let visionWasmSource = 'same-origin';
@@ -3068,6 +3107,16 @@ const POSE_FACE_ALPHA = 0.28;
 const POSE_BODY_ALPHA = 0.40;
 const POSE_TELEPORT_THRESHOLD = 0.22;
 const POSE_STATE_TTL_MS = 600;
+/**
+ * RTM-позы приходят реже (~15–30 Гц) — постоянный EMA там даёт заметное запаздывание.
+ * Для RTM alpha растёт со скоростью точки: мелкий дребезг сглаживается, быстрый взмах проходит почти без задержки.
+ * Сдвиг за кадр (в долях кадра), при котором сглаживание отключается полностью:
+ */
+const POSE_FAST_MOTION = 0.04;
+/** Видимость сглаживаем отдельно — иначе линии на границе порога мигают */
+const POSE_VISIBILITY_ALPHA = 0.35;
+/** Связи скелета с менее видимыми концами не рисуем (ноги за кадром, загороженные руки) */
+const POSE_DRAW_MIN_VISIBILITY = 0.5;
 /** Map<personKey, { lm: { [idx]: {x, y, z, visibility} }, lastSeenMs }> */
 const poseSmoothByKey = new Map();
 
@@ -3086,15 +3135,18 @@ function smoothPoseLandmarks(personKey, rawLm, nowMs) {
             continue;
         }
         const prev = state.lm[i];
-        const alpha = FACE_LM_INDICES.has(i) ? POSE_FACE_ALPHA : POSE_BODY_ALPHA;
-        if (!prev || Math.hypot(r.x - prev.x, r.y - prev.y) > POSE_TELEPORT_THRESHOLD) {
+        const baseAlpha = FACE_LM_INDICES.has(i) ? POSE_FACE_ALPHA : POSE_BODY_ALPHA;
+        const jump = prev ? Math.hypot(r.x - prev.x, r.y - prev.y) : Infinity;
+        if (!prev || jump > POSE_TELEPORT_THRESHOLD) {
             state.lm[i] = { x: r.x, y: r.y, z: r.z, visibility: r.visibility };
         } else {
+            const alpha = rtmClient ? baseAlpha + (1 - baseAlpha) * Math.min(1, jump / POSE_FAST_MOTION) : baseAlpha;
+            const va = POSE_VISIBILITY_ALPHA;
             state.lm[i] = {
                 x: prev.x * (1 - alpha) + r.x * alpha,
                 y: prev.y * (1 - alpha) + r.y * alpha,
                 z: (prev.z ?? 0) * (1 - alpha) + (r.z ?? 0) * alpha,
-                visibility: r.visibility
+                visibility: (prev.visibility ?? 1) * (1 - va) + (r.visibility ?? 1) * va
             };
         }
         out[i] = state.lm[i];
@@ -3300,7 +3352,18 @@ function gameLoop(nowTime) {
     let startTimeMs = performance.now();
     let gotNewVideoFrame = false;
 
-    if (lastVideoTime !== video.currentTime) {
+    if (rtmClient) {
+        /** RTM считается в worker асинхронно: кадр уходит, когда worker свободен; результат приходит позже */
+        if (lastVideoTime !== video.currentTime && rtmClient.submit(video)) {
+            lastVideoTime = video.currentTime;
+        }
+        const rtmPersons = rtmClient.takeResult();
+        if (rtmPersons) {
+            predictedPoseKeys.clear();
+            for (const p of rtmPersons) if (p.predicted) predictedPoseKeys.add(p.key);
+            commitPoseTargetsFromFrame(rtmPersons, nowTime);
+        }
+    } else if (lastVideoTime !== video.currentTime) {
         lastVideoTime = video.currentTime;
         gotNewVideoFrame = true;
         /** Время кадра видео (мс) — строго монотонное для VIDEO mode */
@@ -3377,9 +3440,19 @@ function gameLoop(nowTime) {
             for (const connection of POSE_CONNECTIONS) {
                 // Skip drawing face lines to replace them with Ninja Mask 
                 if (connection.start <= 10 && connection.end <= 10) continue;
+                const pa = landmarks[connection.start];
+                const pb = landmarks[connection.end];
+                if (
+                    !pa ||
+                    !pb ||
+                    (pa.visibility ?? 1) < POSE_DRAW_MIN_VISIBILITY ||
+                    (pb.visibility ?? 1) < POSE_DRAW_MIN_VISIBILITY
+                ) {
+                    continue;
+                }
 
-                const a = getScreenPoint(landmarks[connection.start]);
-                const b = getScreenPoint(landmarks[connection.end]);
+                const a = getScreenPoint(pa);
+                const b = getScreenPoint(pb);
                 canvasCtx.beginPath();
                 canvasCtx.moveTo(a.x, a.y);
                 canvasCtx.lineTo(b.x, b.y);
@@ -3805,6 +3878,8 @@ function gameLoop(nowTime) {
             console.info(
                 `[perf] среднее за кадр ${avg.toFixed(1)} ms (n=${perfFrameCount}). >22 ms — риск фризов; вкладка Performance.`
             );
+            const rtmLine = rtmClient?.takeStatsLine();
+            if (rtmLine) console.info(`[perf] RTM (${rtmClient.backend}): ${rtmLine}`);
             perfFrameSumMs = 0;
             perfFrameCount = 0;
         }
