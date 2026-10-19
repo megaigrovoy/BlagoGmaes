@@ -643,7 +643,15 @@ let wordsCompleted = 0;
 /** Пауза с показом картинки собранного слова */
 let wordRevealActive = false;
 let wordRevealTimer = 0;
-const WORD_REVEAL_MS = 2000;
+/** Показ собранного слова: слово звучит ~1 с, потом ещё пауза, чтобы ребёнок успел его услышать и увидеть */
+const WORD_REVEAL_MS = 3200;
+/**
+ * Пауза после реза (или вылета) буквы перед следующей. Без неё следующая буква появлялась сразу
+ * и резалась случайно — рукой, которая просто опускалась после прошлого удара.
+ */
+const WORD_LETTER_GAP_MS = 1300;
+/** Date.now(), раньше которого новая буква слова не вылетает */
+let wordNextLetterAt = 0;
 
 function resetWordState() {
     wordQueue = [...wordListForUiLang()];
@@ -867,6 +875,7 @@ function checkLevelGoal() {
 function handleSliceScoring(fruit) {
     playSliceSoundForTarget(fruit);
     if (fruit.levelMode === 'word') {
+        wordNextLetterAt = Date.now() + WORD_LETTER_GAP_MS;
         const need = currentWord[wordProgress];
         if (need && fruit.glyphChar === need) {
             wordProgress += 1;
@@ -888,7 +897,10 @@ function handleSliceScoring(fruit) {
 
 /** Предмет улетел вниз несрезанным */
 function handleMiss() {
-    if (getCurrentLevelConfig().mode === 'word') return; // букв много — не штрафуем
+    if (getCurrentLevelConfig().mode === 'word') {
+        wordNextLetterAt = Date.now() + WORD_LETTER_GAP_MS;
+        return; // букв много — не штрафуем
+    }
     levelBadEvents += 1;
     breakCombo();
     score = Math.max(0, score - MISS_PENALTY);
@@ -3563,7 +3575,7 @@ function gameLoop(nowTime) {
     const unslicedCount = fruits.filter((f) => !f.isSliced).length;
     /** В режиме слов — строго одна нужная буква на экране, чтобы ребёнок видел ровно ту, что нужна */
     const effectiveMaxConcurrent = levelCfg.mode === 'word' ? 1 : levelCfg.maxConcurrent;
-    if (levelCfg.mode !== 'board' && !levelComplete && !wordRevealActive && now - lastSpawnTime >= levelCfg.spawnIntervalMs && unslicedCount < effectiveMaxConcurrent) {
+    if (levelCfg.mode !== 'board' && !levelComplete && !wordRevealActive && (levelCfg.mode !== 'word' || now >= wordNextLetterAt) && now - lastSpawnTime >= levelCfg.spawnIntervalMs && unslicedCount < effectiveMaxConcurrent) {
         fruits.push(new Fruit());
         lastSpawnTime = now;
     }
