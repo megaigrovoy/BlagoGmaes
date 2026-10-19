@@ -1,5 +1,6 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import { RtmPoseClient } from './src/rtm/client.js';
+import { FRUIT_STEM_BY_EMOJI, LETTERS, VOICE_LANGS, WORDS, voiceKey } from './src/voice/lines.js';
 
 /** Совпадает с dependencies в package.json — не @latest, стабильнее кэш CDN */
 const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
@@ -11,7 +12,7 @@ const STORAGE_UI_LANG = 'neon-ninja-ui-lang';
 
 function loadUiLangPreference() {
     const raw = localStorage.getItem(STORAGE_UI_LANG);
-    return raw === 'en' ? 'en' : 'ru';
+    return VOICE_LANGS.includes(raw) ? raw : 'ru';
 }
 
 function loadPlayerCountPreference() {
@@ -19,7 +20,7 @@ function loadPlayerCountPreference() {
     return raw === '1' ? 1 : 2;
 }
 
-/** ru | en — сохраняется в localStorage при переключении языка */
+/** ru | en | el — сохраняется в localStorage при переключении языка */
 let uiLang = loadUiLangPreference();
 
 /** 1 или 2 — как numPoses у PoseLandmarker */
@@ -104,167 +105,36 @@ function playSliceSound(emoji) {
     playOneShotSfx(sliceSoundUrlByEmoji[emoji], 0.88);
 }
 
-/** Голос при вылете продукта: ru — stuff/*.MP3; en — «stuff en»/*.MP3 (см. стемы и fallback ниже) */
-const spawnVoiceUrlByEmoji = {
-    '🍌': new URL('./src/assets/sounds/stuff/banana.MP3', import.meta.url).href,
-    '🍎': new URL('./src/assets/sounds/stuff/apple.MP3', import.meta.url).href,
-    '🍉': new URL('./src/assets/sounds/stuff/watermelon.MP3', import.meta.url).href,
-    '🍊': new URL('./src/assets/sounds/stuff/orange.MP3', import.meta.url).href,
-    '🍗': new URL('./src/assets/sounds/stuff/chicken.MP3', import.meta.url).href,
-    '🥩': new URL('./src/assets/sounds/stuff/meat.MP3', import.meta.url).href,
-    '🥦': new URL('./src/assets/sounds/stuff/broccoli.MP3', import.meta.url).href,
-    '🥬': new URL('./src/assets/sounds/stuff/cabbage.MP3', import.meta.url).href,
-    '🍆': new URL('./src/assets/sounds/stuff/eggplant.MP3', import.meta.url).href,
-    '🍅': new URL('./src/assets/sounds/stuff/tomat.MP3', import.meta.url).href
-};
-
-/** Совпадает с именами в stuff/*.MP3 — для «stuff en» подбирается файл по стему / fallback */
-const SPAWN_VOICE_STEM_BY_EMOJI = {
-    '🍌': 'banana',
-    '🍎': 'apple',
-    '🍉': 'watermelon',
-    '🍊': 'orange',
-    '🍗': 'chicken',
-    '🥩': 'meat',
-    '🥦': 'broccoli',
-    '🥬': 'cabbage',
-    '🍆': 'eggplant',
-    '🍅': 'tomat'
-};
-
-/** Если в «stuff en» другое имя файла (tomato вместо tomat, steak вместо meat) */
-const SPAWN_VOICE_EN_STEM_FALLBACK = {
-    tomat: 'tomato',
-    meat: 'steak'
-};
-
-const enSpawnVoiceUrlByStem = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/stuff en/*.MP3', {
-            eager: true,
-            query: '?url',
-            import: 'default'
-        })
-    ).map(([path, href]) => {
-        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
-        return [file.toLowerCase(), href];
-    })
-);
-
-function spawnVoiceUrlResolve(emoji) {
-    const ruUrl = spawnVoiceUrlByEmoji[emoji];
-    if (uiLang !== 'en') return ruUrl;
-    const stem = SPAWN_VOICE_STEM_BY_EMOJI[emoji];
-    if (!stem) return ruUrl;
-    const low = stem.toLowerCase();
-    let url = enSpawnVoiceUrlByStem[low];
-    if (!url) {
-        const alt = SPAWN_VOICE_EN_STEM_FALLBACK[low];
-        if (alt) url = enSpawnVoiceUrlByStem[alt.toLowerCase()];
-    }
-    return url || ruUrl;
+/**
+ * Вся озвучка: src/assets/sounds/voice/<lang>/<category>/<key>.mp3 (тексты — src/voice/lines.js).
+ * category: letters | numbers | fruit | board | praise | win | words.
+ * VOICE_URLS[lang][category][key] = url; ключи в NFC (имена файлов на macOS бывают в NFD).
+ */
+const VOICE_URLS = {};
+for (const [path, href] of Object.entries(
+    import.meta.glob('./src/assets/sounds/voice/*/*/*.mp3', { eager: true, query: '?url', import: 'default' })
+)) {
+    const m = path.match(/voice\/([^/]+)\/([^/]+)\/([^/]+)\.mp3$/);
+    if (!m) continue;
+    const [, lang, category, key] = m;
+    ((VOICE_URLS[lang] ??= {})[category] ??= {})[key.normalize('NFC')] = href;
 }
 
-/** Имя файла = строчная кириллица (а.MP3 … я.MP3); ключ — lowercase для lookup с буквы алфавита UI */
-const ruLetterSpawnUrlByLower = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/letters/ru/*.MP3', {
-            eager: true,
-            query: '?url',
-            import: 'default'
-        })
-    ).map(([path, href]) => {
-        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
-        return [file.toLowerCase(), href];
-    })
-);
+function voiceMap(category, lang = uiLang) {
+    return VOICE_URLS[lang]?.[category] ?? {};
+}
 
-/** Латиница a.MP3 … z.MP3 для английского UI */
-const enLetterSpawnUrlByLower = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/letters/en/*.MP3', {
-            eager: true,
-            query: '?url',
-            import: 'default'
-        })
-    ).map(([path, href]) => {
-        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
-        return [file.toLowerCase(), href];
-    })
-);
+function voiceUrl(category, key, lang = uiLang) {
+    return key == null ? null : voiceMap(category, lang)[String(key).normalize('NFC')] ?? null;
+}
 
-/** Имя файла = число 1 … 10 (.MP3); ключ строкой для совпадения с label */
-const ruNumberSpawnUrlByKey = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/numbers/ru/*.MP3', {
-            eager: true,
-            query: '?url',
-            import: 'default'
-        })
-    ).map(([path, href]) => {
-        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
-        return [file, href];
-    })
-);
+function voiceUrlsOfLang(lang) {
+    return Object.values(VOICE_URLS[lang] ?? {}).flatMap((m) => Object.values(m));
+}
 
-const enNumberSpawnUrlByKey = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/numbers/en/*.MP3', {
-            eager: true,
-            query: '?url',
-            import: 'default'
-        })
-    ).map(([path, href]) => {
-        const file = path.replace(/^.*\//, '').replace(/\.MP3$/i, '');
-        return [file, href];
-    })
-);
-
-/** Числовые уровни: по кругу только 1 … NUMBER_SPAWN_CYCLE_MAX (озвучка — sounds/numbers/ru|en) */
-const NUMBER_SPAWN_CYCLE_MAX = 10;
-
-/**
- * Похвала за серию (комбо) — случайная фраза текущего языка.
- * Папки sounds/praise/ru|en; файлы можно называть как угодно — проигрывается случайный.
- */
-const ruPraiseUrls = Object.values(
-    import.meta.glob('./src/assets/sounds/praise/ru/*.MP3', { eager: true, query: '?url', import: 'default' })
-);
-const enPraiseUrls = Object.values(
-    import.meta.glob('./src/assets/sounds/praise/en/*.MP3', { eager: true, query: '?url', import: 'default' })
-);
-
-/** Подсказка при появлении доски — sounds/board/ru|en: hand.MP3 («Бей!»/«Рукой!»), foot.MP3 («Ногой!») */
-const ruBoardHintUrlByStem = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/board/ru/*.{mp3,MP3}', { eager: true, query: '?url', import: 'default' })
-    ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.MP3$/i, '').toLowerCase(), href])
-);
-const enBoardHintUrlByStem = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/board/en/*.{mp3,MP3}', { eager: true, query: '?url', import: 'default' })
-    ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.MP3$/i, '').toLowerCase(), href])
-);
-
-/** Фанфары/«ты победил» на экране победы — sounds/win/ru|en (любые имена, случайный) */
-const ruWinUrls = Object.values(
-    import.meta.glob('./src/assets/sounds/win/ru/*.MP3', { eager: true, query: '?url', import: 'default' })
-);
-const enWinUrls = Object.values(
-    import.meta.glob('./src/assets/sounds/win/en/*.MP3', { eager: true, query: '?url', import: 'default' })
-);
-
-/** Озвучка слова целиком (режим слов) — имя файла = слово: кот.MP3 / cat.MP3 (sounds/words/ru|en) */
-const ruWordUrlByText = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/words/ru/*.MP3', { eager: true, query: '?url', import: 'default' })
-    ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.MP3$/i, '').toLowerCase(), href])
-);
-const enWordUrlByText = Object.fromEntries(
-    Object.entries(
-        import.meta.glob('./src/assets/sounds/words/en/*.MP3', { eager: true, query: '?url', import: 'default' })
-    ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.MP3$/i, '').toLowerCase(), href])
-);
+function spawnVoiceUrlResolve(emoji) {
+    return voiceUrl('fruit', FRUIT_STEM_BY_EMOJI[emoji]);
+}
 
 /** Картинка слова (режим слов) — имя файла = слово: кот.png / cat.png (images/words/ru|en, png|jpg|jpeg|webp) */
 const ruWordImageByText = Object.fromEntries(
@@ -285,17 +155,17 @@ const enWordImageByText = Object.fromEntries(
         })
     ).map(([path, href]) => [path.replace(/^.*\//, '').replace(/\.[^.]+$/, '').toLowerCase(), href])
 );
+/** Для греческого картинок пока нет — показывается эмодзи слова */
+const WORD_IMAGES_BY_LANG = { ru: ruWordImageByText, en: enWordImageByText };
 
 function wordImageUrl(word) {
     if (!word) return null;
-    const map = uiLang === 'en' ? enWordImageByText : ruWordImageByText;
-    return map[String(word).toLowerCase()] || null;
+    return WORD_IMAGES_BY_LANG[uiLang]?.[String(word).toLowerCase()] || null;
 }
 
 /** Прогрев картинок слов текущего языка — чтобы первый показ был без задержки */
 function preloadWordImages() {
-    const map = uiLang === 'en' ? enWordImageByText : ruWordImageByText;
-    for (const u of Object.values(map)) {
+    for (const u of Object.values(WORD_IMAGES_BY_LANG[uiLang] ?? {})) {
         const im = new Image();
         im.src = u;
     }
@@ -308,30 +178,28 @@ function pickRandomUrl(arr) {
 /** Голосовая похвала на серию — рандом из набора текущего языка */
 function playPraiseSound() {
     if (!soundEffectsEnabled) return;
-    const u = pickRandomUrl(uiLang === 'en' ? enPraiseUrls : ruPraiseUrls);
+    const u = pickRandomUrl(Object.values(voiceMap('praise')));
     if (u) playOneShotSfx(u, 1.0);
 }
 
-/** «Бей!» / «Ногой!» при появлении доски в соответствующей зоне */
+/** «Удар рукой!» / «Удар ногой!» при появлении доски в соответствующей зоне */
 function playBoardHintSound(strikeKind) {
     if (!soundEffectsEnabled) return;
-    const map = uiLang === 'en' ? enBoardHintUrlByStem : ruBoardHintUrlByStem;
-    const u = map[strikeKind] || map[strikeKind === 'hand' ? 'hit' : 'kick'];
+    const u = voiceUrl('board', strikeKind);
     if (u) playOneShotSfx(u, 1.0);
 }
 
-/** Фанфары на экране победы */
+/** Фраза победы на экране победы */
 function playWinSound() {
     if (!soundEffectsEnabled) return;
-    const u = pickRandomUrl(uiLang === 'en' ? enWinUrls : ruWinUrls);
+    const u = pickRandomUrl(Object.values(voiceMap('win')));
     if (u) playOneShotSfx(u, 1.0);
 }
 
 /** Озвучка собранного слова целиком */
 function playWordSound(word) {
     if (!soundEffectsEnabled || !word) return;
-    const map = uiLang === 'en' ? enWordUrlByText : ruWordUrlByText;
-    const u = map[String(word).toLowerCase()];
+    const u = voiceUrl('words', voiceKey(word));
     if (u) playOneShotSfx(u, 1.0);
 }
 
@@ -342,25 +210,24 @@ function playSpawnVoice(emoji) {
     playOneShotSfx(url, 0.95);
 }
 
-/** Озвучка буквы при появлении — ru/en по языку UI (папки sounds/letters/ru|en) */
+/** Озвучка буквы при появлении — по языку UI */
 function playLetterSpawnSound(char) {
     if (!soundEffectsEnabled || !char) return;
-    const key = char.toLowerCase();
-    const url =
-        uiLang === 'ru' ? ruLetterSpawnUrlByLower[key] : uiLang === 'en' ? enLetterSpawnUrlByLower[key] : null;
+    const url = voiceUrl('letters', voiceKey(char));
     if (!url) return;
     playOneShotSfx(url, 0.95);
 }
 
-/** Озвучка цифры при появлении — ru/en (файлы 1.MP3 … 10.MP3) */
+/** Озвучка цифры при появлении (1 … 10) */
 function playNumberSpawnSound(n) {
     if (!soundEffectsEnabled || !Number.isFinite(n)) return;
-    const key = String(Math.floor(n));
-    const url =
-        uiLang === 'ru' ? ruNumberSpawnUrlByKey[key] : uiLang === 'en' ? enNumberSpawnUrlByKey[key] : null;
+    const url = voiceUrl('numbers', Math.floor(n));
     if (!url) return;
     playOneShotSfx(url, 0.95);
 }
+
+/** Числовые уровни: по кругу только 1 … NUMBER_SPAWN_CYCLE_MAX (озвучка — voice/<lang>/numbers) */
+const NUMBER_SPAWN_CYCLE_MAX = 10;
 
 const MENU_MUSIC_URL = new URL('./src/assets/sounds/menu.mp3', import.meta.url).href;
 /** Фоновые треки в игре — все .mp3 из src/assets/sounds/OST */
@@ -506,55 +373,26 @@ function warmSfxBuffers(urls, concurrency = 6) {
 /** Звуки, нужные конкретному уровню в текущем языке (срезы + озвучка режима) — для приоритетного прогрева */
 function currentLevelSfxUrls(cfg) {
     const urls = [...SLICE_SFX_FALLBACK_POOL];
-    /** Похвала и фанфары нужны в любом режиме */
-    urls.push(...(uiLang === 'en' ? enPraiseUrls : ruPraiseUrls));
-    urls.push(...(uiLang === 'en' ? enWinUrls : ruWinUrls));
+    /** Похвала и фразы победы нужны в любом режиме */
+    urls.push(...Object.values(voiceMap('praise')), ...Object.values(voiceMap('win')));
     if (cfg?.mode === 'fruit') {
-        for (const e of Object.keys(spawnVoiceUrlByEmoji)) {
-            urls.push(spawnVoiceUrlResolve(e));
-        }
+        urls.push(...Object.values(voiceMap('fruit')));
     } else if (cfg?.mode === 'letter') {
-        const map = uiLang === 'en' ? enLetterSpawnUrlByLower : ruLetterSpawnUrlByLower;
-        urls.push(...Object.values(map));
+        urls.push(...Object.values(voiceMap('letters')));
     } else if (cfg?.mode === 'number') {
-        const map = uiLang === 'en' ? enNumberSpawnUrlByKey : ruNumberSpawnUrlByKey;
-        urls.push(...Object.values(map));
+        urls.push(...Object.values(voiceMap('numbers')));
     } else if (cfg?.mode === 'word') {
-        const letters = uiLang === 'en' ? enLetterSpawnUrlByLower : ruLetterSpawnUrlByLower;
-        urls.push(...Object.values(letters));
-        urls.push(...Object.values(uiLang === 'en' ? enWordUrlByText : ruWordUrlByText));
+        urls.push(...Object.values(voiceMap('letters')), ...Object.values(voiceMap('words')));
     } else if (cfg?.mode === 'board') {
-        urls.push(...Object.values(uiLang === 'en' ? enBoardHintUrlByStem : ruBoardHintUrlByStem));
+        urls.push(...Object.values(voiceMap('board')));
     }
     return urls.filter(Boolean);
 }
 
 /** Все sfx, но с текущим языком первым — фоновой прогрев на загрузке */
 function allSfxUrlsCurrentLangFirst() {
-    const curLang =
-        uiLang === 'en'
-            ? [
-                  ...Object.values(enLetterSpawnUrlByLower),
-                  ...Object.values(enNumberSpawnUrlByKey),
-                  ...Object.values(enSpawnVoiceUrlByStem)
-              ]
-            : [
-                  ...Object.values(ruLetterSpawnUrlByLower),
-                  ...Object.values(ruNumberSpawnUrlByKey),
-                  ...Object.values(spawnVoiceUrlByEmoji)
-              ];
-    const praiseWin = [...ruPraiseUrls, ...enPraiseUrls, ...ruWinUrls, ...enWinUrls];
-    const rest = [
-        ...Object.values(spawnVoiceUrlByEmoji),
-        ...Object.values(enSpawnVoiceUrlByStem),
-        ...Object.values(ruLetterSpawnUrlByLower),
-        ...Object.values(enLetterSpawnUrlByLower),
-        ...Object.values(ruNumberSpawnUrlByKey),
-        ...Object.values(enNumberSpawnUrlByKey),
-        ...Object.values(ruWordUrlByText),
-        ...Object.values(enWordUrlByText)
-    ];
-    return [...new Set([...SLICE_SFX_FALLBACK_POOL, ...praiseWin, ...curLang, ...rest])].filter(Boolean);
+    const others = VOICE_LANGS.filter((l) => l !== uiLang).flatMap(voiceUrlsOfLang);
+    return [...new Set([...SLICE_SFX_FALLBACK_POOL, ...voiceUrlsOfLang(uiLang), ...others])].filter(Boolean);
 }
 
 function warmSfxAudioBuffersYielding() {
@@ -783,80 +621,17 @@ function comboMultiplier() {
     return Math.min(5, 1 + Math.floor(comboStreak / 5));
 }
 
-/** Детские слова по языку UI (3–4 буквы). Имя звукового файла = слово в нижнем регистре. */
-const WORD_LIST_RU = [
-    'КОТ', 'ДОМ', 'МАМА', 'СОК', 'МЯЧ', 'СЫР',
-    'ПАПА', 'ЛИСА', 'РЫБА', 'СОВА', 'ГРИБ', 'ШАР',
-    'ЛЕВ', 'ТИГР', 'ВОЛК', 'ЗАЯЦ', 'УТКА', 'СЛОН',
-    'КИТ', 'ЗМЕЯ', 'ПЧЕЛА', 'КОЗА', 'ОВЦА', 'КРАБ',
-    'АКУЛА', 'ЛУНА', 'ВОДА', 'СНЕГ', 'РОЗА', 'ЛИМОН',
-    'БАНАН', 'АРБУЗ', 'ТОРТ', 'ХЛЕБ', 'ПИЦЦА', 'МАШИНА',
-    'ПОЕЗД', 'ЛОДКА', 'РАКЕТА', 'КЛЮЧ', 'КНИГА', 'ЦВЕТОК',
-    'ПАУК', 'МЫШЬ', 'СОБАКА', 'ПТИЦА', 'КОРОВА', 'МЕДВЕДЬ',
-    'ЛОШАДЬ', 'КУРИЦА', 'НОС', 'РОТ', 'ГЛАЗ', 'УХО',
-    'РУКА', 'НОГА', 'СОЛНЦЕ', 'ДОЖДЬ', 'ОБЛАКО', 'ЗВЕЗДА',
-    'ОГОНЬ', 'РАДУГА', 'СТУЛ', 'ОКНО', 'САМОЛЁТ', 'ЗОНТ',
-    'МОЛОКО', 'ЯЙЦО', 'МЁД', 'МОРЕ', 'РЕКА', 'ЗАМОК',
-    'МОСТ', 'ДЕРЕВО', 'ЯБЛОКО', 'ГРУША', 'МОРКОВЬ', 'СУП',
-    'САХАР', 'ЧАШКА', 'ТАРЕЛКА', 'ЛОЖКА', 'ВИЛКА', 'НОЖ'
-];
-const WORD_LIST_EN = [
-    'CAT', 'DOG', 'SUN', 'MOM', 'CUP', 'BED',
-    'PIG', 'COW', 'BUS', 'HAT', 'FOX', 'FISH',
-    'LION', 'TIGER', 'WOLF', 'BEAR', 'DUCK', 'FROG',
-    'BEE', 'ANT', 'OWL', 'HEN', 'GOAT', 'LAMB',
-    'CRAB', 'WHALE', 'SNAKE', 'STAR', 'MOON', 'RAIN',
-    'SNOW', 'TREE', 'ROSE', 'APPLE', 'BANANA', 'LEMON',
-    'CAKE', 'PIZZA', 'CAR', 'BOAT', 'KEY', 'BOOK',
-    'MOUSE', 'HORSE', 'CHICK', 'SPIDER', 'EAGLE', 'DEER',
-    'CLOUD', 'FIRE', 'HEART', 'HAND', 'FOOT', 'NOSE',
-    'EAR', 'EYE', 'PLANE', 'TRAIN', 'BIKE', 'TRUCK',
-    'SHIP', 'MILK', 'EGG', 'HONEY', 'SOUP', 'CORN',
-    'BEAN', 'CHAIR', 'DOOR', 'LAMP', 'BELL', 'BALL',
-    'DOLL', 'SEA', 'HILL', 'SAND', 'ROCK', 'LEAF',
-    'WIND', 'JUICE', 'ICE', 'TOYS', 'SOCK', 'SHOE'
-];
-
-/** Эмодзи для показа собранного слова (как у фруктов). Ключ — слово в верхнем регистре. */
-const WORD_EMOJI = {
-    // RU
-    'КОТ': '🐱', 'ДОМ': '🏠', 'МАМА': '👩', 'СОК': '🧃', 'МЯЧ': '⚽', 'СЫР': '🧀',
-    'ПАПА': '👨', 'ЛИСА': '🦊', 'РЫБА': '🐟', 'СОВА': '🦉', 'ГРИБ': '🍄', 'ШАР': '🎈',
-    'ЛЕВ': '🦁', 'ТИГР': '🐯', 'ВОЛК': '🐺', 'ЗАЯЦ': '🐰', 'УТКА': '🦆', 'СЛОН': '🐘',
-    'КИТ': '🐳', 'ЗМЕЯ': '🐍', 'ПЧЕЛА': '🐝', 'КОЗА': '🐐', 'ОВЦА': '🐑', 'КРАБ': '🦀',
-    'АКУЛА': '🦈', 'ЛУНА': '🌙', 'ВОДА': '💧', 'СНЕГ': '❄️', 'РОЗА': '🌹', 'ЛИМОН': '🍋',
-    'БАНАН': '🍌', 'АРБУЗ': '🍉', 'ТОРТ': '🎂', 'ХЛЕБ': '🍞', 'ПИЦЦА': '🍕', 'МАШИНА': '🚗',
-    'ПОЕЗД': '🚆', 'ЛОДКА': '⛵', 'РАКЕТА': '🚀', 'КЛЮЧ': '🔑', 'КНИГА': '📚', 'ЦВЕТОК': '🌸',
-    'ПАУК': '🕷️', 'МЫШЬ': '🐭', 'СОБАКА': '🐶', 'ПТИЦА': '🐦', 'КОРОВА': '🐄', 'МЕДВЕДЬ': '🐻',
-    'ЛОШАДЬ': '🐴', 'КУРИЦА': '🐔', 'НОС': '👃', 'РОТ': '👄', 'ГЛАЗ': '👁️', 'УХО': '👂',
-    'РУКА': '✋', 'НОГА': '🦵', 'СОЛНЦЕ': '☀️', 'ДОЖДЬ': '🌧️', 'ОБЛАКО': '☁️', 'ЗВЕЗДА': '⭐',
-    'ОГОНЬ': '🔥', 'РАДУГА': '🌈', 'СТУЛ': '🪑', 'ОКНО': '🪟', 'САМОЛЁТ': '✈️', 'ЗОНТ': '☂️',
-    'МОЛОКО': '🥛', 'ЯЙЦО': '🥚', 'МЁД': '🍯', 'МОРЕ': '🌊', 'РЕКА': '🏞️', 'ЗАМОК': '🏰',
-    'МОСТ': '🌉', 'ДЕРЕВО': '🌳', 'ЯБЛОКО': '🍎', 'ГРУША': '🍐', 'МОРКОВЬ': '🥕', 'СУП': '🍲',
-    'САХАР': '🍬', 'ЧАШКА': '☕', 'ТАРЕЛКА': '🍽️', 'ЛОЖКА': '🥄', 'ВИЛКА': '🍴', 'НОЖ': '🔪',
-    // EN
-    'CAT': '🐱', 'DOG': '🐶', 'SUN': '☀️', 'MOM': '👩', 'CUP': '☕', 'BED': '🛏️',
-    'PIG': '🐷', 'COW': '🐮', 'BUS': '🚌', 'HAT': '🎩', 'FOX': '🦊', 'FISH': '🐟',
-    'LION': '🦁', 'TIGER': '🐯', 'WOLF': '🐺', 'BEAR': '🐻', 'DUCK': '🦆', 'FROG': '🐸',
-    'BEE': '🐝', 'ANT': '🐜', 'OWL': '🦉', 'HEN': '🐔', 'GOAT': '🐐', 'LAMB': '🐑',
-    'CRAB': '🦀', 'WHALE': '🐳', 'SNAKE': '🐍', 'STAR': '⭐', 'MOON': '🌙', 'RAIN': '🌧️',
-    'SNOW': '❄️', 'TREE': '🌳', 'ROSE': '🌹', 'APPLE': '🍎', 'BANANA': '🍌', 'LEMON': '🍋',
-    'CAKE': '🎂', 'PIZZA': '🍕', 'CAR': '🚗', 'BOAT': '⛵', 'KEY': '🔑', 'BOOK': '📚',
-    'MOUSE': '🐭', 'HORSE': '🐴', 'CHICK': '🐤', 'SPIDER': '🕷️', 'EAGLE': '🦅', 'DEER': '🦌',
-    'CLOUD': '☁️', 'FIRE': '🔥', 'HEART': '❤️', 'HAND': '✋', 'FOOT': '🦶', 'NOSE': '👃',
-    'EAR': '👂', 'EYE': '👁️', 'PLANE': '✈️', 'TRAIN': '🚂', 'BIKE': '🚲', 'TRUCK': '🚚',
-    'SHIP': '🚢', 'MILK': '🥛', 'EGG': '🥚', 'HONEY': '🍯', 'SOUP': '🍲', 'CORN': '🌽',
-    'BEAN': '🫘', 'CHAIR': '🪑', 'DOOR': '🚪', 'LAMP': '💡', 'BELL': '🔔', 'BALL': '⚽',
-    'DOLL': '🪆', 'SEA': '🌊', 'HILL': '⛰️', 'SAND': '🏖️', 'ROCK': '🪨', 'LEAF': '🍃',
-    'WIND': '💨', 'JUICE': '🧃', 'ICE': '🧊', 'TOYS': '🧸', 'SOCK': '🧦', 'SHOE': '👟'
-};
+/** Детские слова по языку UI — src/voice/lines.js (там же эмодзи и произношение) */
+const WORD_EMOJI = Object.fromEntries(
+    Object.values(WORDS).flatMap((list) => list.map(([word, emoji]) => [word, emoji]))
+);
 
 function wordEmoji(word) {
     return word ? WORD_EMOJI[String(word).toUpperCase()] || null : null;
 }
 
 function wordListForUiLang() {
-    return uiLang === 'en' ? WORD_LIST_EN : WORD_LIST_RU;
+    return (WORDS[uiLang] ?? WORDS.ru).map(([word]) => word);
 }
 
 /** Состояние режима слов */
@@ -1377,6 +1152,58 @@ const I18N = {
         errorHintNoCamera: 'No camera found. Check that it is connected and not used by another app.',
         errorHintTimeout:
             'The camera did not start in time. Turn off device emulation in DevTools (or pick a real camera), close other apps using the camera, and refresh.'
+    },
+    el: {
+        tierProducts: 'Τρόφιμα',
+        tierLetters: 'Γράμματα',
+        tierNumbers: 'Αριθμοί',
+        tierWords: 'Λέξεις',
+        tierBoards: 'Σανίδες',
+        hudAtOnce: 'ταυτόχρονα',
+        comboLabel: 'Σερί',
+        comboMax: 'Καλύτερο σερί',
+        wordPrompt: 'Φτιάξε τη λέξη',
+        winTitle: 'Το επίπεδο ολοκληρώθηκε!',
+        winScoreLabel: 'Πόντοι',
+        winNextLevel: 'Επόμενο',
+        winAutoHint: 'Επόμενο επίπεδο σε',
+        winReplay: 'Ξανά',
+        winToMenu: 'Μενού',
+        praiseGreat: 'Μπράβο!',
+        praiseSuper: 'Τέλεια!',
+        praiseWow: 'Ουάου!',
+        praiseCombo: 'Σερί',
+        hudGoal: 'Στόχος',
+        scorePrefix: 'Πόντοι: ',
+        menuHeading: 'Διάλεξε παιχνίδι',
+        menuHint: 'Η δυσκολία μέσα στο παιχνίδι αυξάνεται αυτόματα: 1 → 2 → 3.',
+        quickSettingsAria: 'Γλώσσα, ήχος, μουσική και αριθμός παικτών',
+        langLabel: 'Γλώσσα',
+        playersOnCamera: 'Αριθμός παικτών',
+        gamesGallery: 'Συλλογή παιχνιδιών',
+        gamesGalleryAria: 'Μετάβαση στη συλλογή παιχνιδιών Blago Games',
+        playersOneAria: 'Ένας παίκτης',
+        playersTwoAria: 'Δύο παίκτες',
+        soundInGame: 'Ήχοι παιχνιδιού',
+        soundOffAria: 'Σίγαση ήχων παιχνιδιού',
+        musicTitle: 'Μουσική',
+        musicDesc: 'Μενού και παιχνίδι',
+        musicOffAria: 'Σίγαση μουσικής',
+        fullscreenEnter: 'Πλήρης οθόνη',
+        fullscreenExit: 'Έξοδος από πλήρη οθόνη',
+        fullscreenEnterAria: 'Πλήρης οθόνη',
+        fullscreenExitAria: 'Έξοδος από πλήρη οθόνη',
+        backToMenu: 'Μενού',
+        loadingModels: 'Φόρτωση μοντέλων…',
+        errorTitle: 'Το παιχνίδι δεν μπόρεσε να ξεκινήσει.',
+        errorHintGeneric:
+            'Άνοιξε την κονσόλα του browser (F12 → Console) και στείλε το κείμενο του σφάλματος αν χρειαστεί.',
+        errorHintCameraBlocked:
+            'Ο browser μπλόκαρε την κάμερα για αυτή τη σελίδα. Πάτησε το λουκέτο δίπλα στη διεύθυνση → επίτρεψε την κάμερα και ανανέωσε τη σελίδα.',
+        errorHintNoCamera:
+            'Δεν βρέθηκε κάμερα. Έλεγξε ότι είναι συνδεδεμένη και δεν τη χρησιμοποιεί άλλη εφαρμογή.',
+        errorHintTimeout:
+            'Η κάμερα δεν ξεκίνησε εγκαίρως. Κλείσε άλλες εφαρμογές που χρησιμοποιούν την κάμερα και ανανέωσε τη σελίδα.'
     }
 };
 
@@ -1393,6 +1220,11 @@ function pluralSimultaneousRu(n) {
     if (n10 === 1) return `${n} объект`;
     if (n10 >= 2 && n10 <= 4) return `${n} объекта`;
     return `${n} объектов`;
+}
+
+/** Греческий: 1 αντικείμενο, остальные — αντικείμενα */
+function pluralSimultaneousEl(n) {
+    return n === 1 ? `${n} αντικείμενο` : `${n} αντικείμενα`;
 }
 
 function pluralSimultaneousEn(n) {
@@ -1427,6 +1259,9 @@ function formatHudLevelLine(levelIndex, maxConcurrent) {
     if (uiLang === 'en') {
         return `${title} · ${pluralSimultaneousEn(maxConcurrent)} ${t('hudAtOnce')}`.trim();
     }
+    if (uiLang === 'el') {
+        return `${title} · ${pluralSimultaneousEl(maxConcurrent)} ${t('hudAtOnce')}`.trim();
+    }
     return `${title} · одновременно ${pluralSimultaneousRu(maxConcurrent)}`;
 }
 
@@ -1454,7 +1289,7 @@ function buildLevelGrid() {
 }
 
 function setUiLang(lang) {
-    if (lang !== 'ru' && lang !== 'en') return;
+    if (!VOICE_LANGS.includes(lang)) return;
     uiLang = lang;
     localStorage.setItem(STORAGE_UI_LANG, lang);
     document.documentElement.lang = lang;
@@ -1493,10 +1328,10 @@ function applyUiTranslations() {
     const lt = document.getElementById('loading-text');
     if (lt) lt.textContent = t('loadingModels');
     if (btnBackMenu) btnBackMenu.textContent = t('backToMenu');
-    const olru = document.getElementById('opt-lang-ru');
-    const olen = document.getElementById('opt-lang-en');
-    if (olru) olru.checked = uiLang === 'ru';
-    if (olen) olen.checked = uiLang === 'en';
+    for (const lang of VOICE_LANGS) {
+        const radio = document.getElementById(`opt-lang-${lang}`);
+        if (radio) radio.checked = uiLang === lang;
+    }
     syncFullscreenButton();
     buildLevelGrid();
     if (scoreDisplay) scoreDisplay.innerText = formatScore(isPlaying ? score : 0);
@@ -1802,14 +1637,12 @@ optPlayers2?.addEventListener('change', () => {
     if (optPlayers2.checked) applyPlayerModeFromUi(true);
 });
 
-const optLangRu = document.getElementById('opt-lang-ru');
-const optLangEn = document.getElementById('opt-lang-en');
-optLangRu?.addEventListener('change', () => {
-    if (optLangRu.checked) setUiLang('ru');
-});
-optLangEn?.addEventListener('change', () => {
-    if (optLangEn.checked) setUiLang('en');
-});
+for (const lang of VOICE_LANGS) {
+    const radio = document.getElementById(`opt-lang-${lang}`);
+    radio?.addEventListener('change', () => {
+        if (radio.checked) setUiLang(lang);
+    });
+}
 
 loadPersistedSettings();
 syncPlayerCountRadios();
@@ -2052,17 +1885,9 @@ function initFruitTextures() {
 }
 initFruitTextures();
 
-/** Русский алфавит для уровней 4–6 (озвучка при вылете — sounds/letters/ru) */
-const CYRILLIC_LETTERS = [
-    'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П',
-    'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', 'Э', 'Ю', 'Я'
-];
-
-/** Латиница для буквенных уровней при английском UI */
-const LATIN_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
-
+/** Алфавит буквенных уровней по языку UI — src/voice/lines.js */
 function letterAlphabetForUiLang() {
-    return uiLang === 'en' ? LATIN_LETTERS : CYRILLIC_LETTERS;
+    return (LETTERS[uiLang] ?? LETTERS.ru).map(([ch]) => ch);
 }
 
 const GLYPH_NEON_COLORS = [

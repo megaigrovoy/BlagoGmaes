@@ -4,3 +4,9 @@ public/mediapipe-wasm/
 .DS_Store
 *.local
 public/models/
+.env
+.env.*
+
+# Генерация озвучки — только локально (скрипт и журнал генерации не в репозитории)
+scripts/generate-voice.mjs
+src/assets/sounds/voice/manifest.json
