@@ -9,6 +9,18 @@ const STORAGE_SFX_OFF = 'neon-ninja-sfx-off';
 const STORAGE_MUSIC_OFF = 'neon-ninja-music-off';
 const STORAGE_PLAYER_COUNT = 'neon-ninja-player-count';
 const STORAGE_UI_LANG = 'neon-ninja-ui-lang';
+const STORAGE_OBJECT_SPEED = 'neon-ninja-object-speed';
+
+/**
+ * Скорость полёта предметов — множитель времени их физики (траектория та же, просто медленнее).
+ * Прежняя скорость = fast (1.0): дети не успевали, поэтому по умолчанию normal.
+ */
+const OBJECT_SPEEDS = { slow: 0.5, normal: 0.7, fast: 1.0 };
+
+function loadObjectSpeedPreference() {
+    const raw = localStorage.getItem(STORAGE_OBJECT_SPEED);
+    return Object.prototype.hasOwnProperty.call(OBJECT_SPEEDS, raw) ? raw : 'normal';
+}
 
 function loadUiLangPreference() {
     const raw = localStorage.getItem(STORAGE_UI_LANG);
@@ -25,6 +37,37 @@ let uiLang = loadUiLangPreference();
 
 /** 1 или 2 — как numPoses у PoseLandmarker */
 let playerModeCount = loadPlayerCountPreference();
+
+/** slow | normal | fast — настройка в меню */
+let objectSpeedSetting = loadObjectSpeedPreference();
+
+/**
+ * Бонус «замедление»: улитка, вылетает иногда вместе с обычным предметом (продукты, цифры, буквы).
+ * Разрезал — всё летит медленнее SLOWMO_FACTOR раз на SLOWMO_DURATION_MS. Улетела — без штрафа.
+ */
+const SLOWMO_BONUS_EMOJI = '🐌';
+const SLOWMO_BONUS_COLOR = '#7df9ff';
+const SLOWMO_FACTOR = 0.5;
+const SLOWMO_DURATION_MS = 7000;
+/** Последние мс замедления скорость плавно возвращается к обычной */
+const SLOWMO_EASE_OUT_MS = 900;
+const SLOWMO_BONUS_MIN_GAP_MS = 15000;
+const SLOWMO_BONUS_CHANCE = 0.15;
+const SLOWMO_BONUS_MODES = new Set(['fruit', 'number', 'letter']);
+/** Date.now(), до которого действует замедление */
+let slowMoUntil = 0;
+let lastSlowMoBonusSpawnAt = 0;
+
+/** Множитель времени для предметов: настройка скорости × действующий бонус */
+function objectTimeScale(nowMs) {
+    let k = OBJECT_SPEEDS[objectSpeedSetting] ?? OBJECT_SPEEDS.normal;
+    const left = slowMoUntil - nowMs;
+    if (left > 0) {
+        const ease = left < SLOWMO_EASE_OUT_MS ? left / SLOWMO_EASE_OUT_MS : 1;
+        k *= 1 - (1 - SLOWMO_FACTOR) * ease;
+    }
+    return k;
+}
 
 /** Добавьте ?perf=1 к URL — в консоли раз в ~2.5 с среднее время кадра (поиск фризов на проде) */
 const DEBUG_FRAME_PERF =
@@ -186,6 +229,13 @@ function playPraiseSound() {
 function playBoardHintSound(strikeKind) {
     if (!soundEffectsEnabled) return;
     const u = voiceUrl('board', strikeKind);
+    if (u) playOneShotSfx(u, 1.0);
+}
+
+/** «Замедление!» при срезе бонуса */
+function playBonusSound(kind) {
+    if (!soundEffectsEnabled) return;
+    const u = voiceUrl('bonus', kind);
     if (u) playOneShotSfx(u, 1.0);
 }
 
@@ -375,6 +425,7 @@ function currentLevelSfxUrls(cfg) {
     const urls = [...SLICE_SFX_FALLBACK_POOL];
     /** Похвала и фразы победы нужны в любом режиме */
     urls.push(...Object.values(voiceMap('praise')), ...Object.values(voiceMap('win')));
+    if (SLOWMO_BONUS_MODES.has(cfg?.mode)) urls.push(...Object.values(voiceMap('bonus')));
     if (cfg?.mode === 'fruit') {
         urls.push(...Object.values(voiceMap('fruit')));
     } else if (cfg?.mode === 'letter') {
@@ -552,6 +603,7 @@ const video = document.getElementById('webcam');
 const canvasElement = document.getElementById('game-canvas');
 const canvasCtx = canvasElement.getContext('2d');
 const scoreDisplay = document.getElementById('score-display');
+const slowMoIndicatorEl = document.getElementById('slowmo-indicator');
 const loadingElement = document.getElementById('loading');
 const mainMenu = document.getElementById('main-menu');
 const levelGrid = document.getElementById('level-grid');
@@ -874,6 +926,10 @@ function checkLevelGoal() {
 /** Рез засчитан: комбо, очки, режим слов, «сок» */
 function handleSliceScoring(fruit) {
     playSliceSoundForTarget(fruit);
+    if (fruit.bonus === 'slowmo') {
+        activateSlowMo(fruit);
+        return;
+    }
     if (fruit.levelMode === 'word') {
         wordNextLetterAt = Date.now() + WORD_LETTER_GAP_MS;
         const need = currentWord[wordProgress];
@@ -893,6 +949,44 @@ function handleSliceScoring(fruit) {
     const extra = Math.min(18, comboMultiplier() * 4);
     juiceBurst(fruit.x, fruit.y, fruit.color, 26 + extra, 16);
     checkLevelGoal();
+}
+
+/** Бонус «замедление» срезан: без очков и серии — просто всё замедляется */
+function activateSlowMo(fruit) {
+    slowMoUntil = Date.now() + SLOWMO_DURATION_MS;
+    playBonusSound('slowmo');
+    floatingTexts.push(new FloatingText(fruit.x, fruit.y - fruit.radius, t('slowMoBonus'), SLOWMO_BONUS_COLOR));
+    juiceBurst(fruit.x, fruit.y, SLOWMO_BONUS_COLOR, 34, 20);
+    screenFlash = Math.max(screenFlash, 0.24);
+}
+
+function shouldSpawnSlowMoBonus(levelCfg, nowMs) {
+    return (
+        SLOWMO_BONUS_MODES.has(levelCfg.mode) &&
+        nowMs >= slowMoUntil &&
+        nowMs - lastSlowMoBonusSpawnAt >= SLOWMO_BONUS_MIN_GAP_MS &&
+        !fruits.some((f) => f.bonus && !f.isSliced) &&
+        Math.random() < SLOWMO_BONUS_CHANCE
+    );
+}
+
+let slowMoIndicatorShown = '';
+
+/** HUD: «🐌 5» пока действует замедление; DOM трогаем только при смене секунды */
+function updateSlowMoIndicator(nowMs) {
+    if (!slowMoIndicatorEl) return;
+    const left = slowMoUntil - nowMs;
+    const label = left > 0 ? `${SLOWMO_BONUS_EMOJI} ${Math.ceil(left / 1000)}` : '';
+    if (label === slowMoIndicatorShown) return;
+    slowMoIndicatorShown = label;
+    slowMoIndicatorEl.textContent = label;
+    slowMoIndicatorEl.classList.toggle('is-hidden', !label);
+}
+
+function resetSlowMo() {
+    slowMoUntil = 0;
+    lastSlowMoBonusSpawnAt = Date.now();
+    updateSlowMoIndicator(Date.now());
 }
 
 /** Предмет улетел вниз несрезанным */
@@ -1094,6 +1188,11 @@ const I18N = {
         gamesGalleryAria: 'Перейти в галерею игр Blago Games',
         playersOneAria: 'Один игрок',
         playersTwoAria: 'Два игрока',
+        speedLabel: 'Скорость',
+        speed_slow: 'Медленно',
+        speed_normal: 'Обычно',
+        speed_fast: 'Быстро',
+        slowMoBonus: 'Замедление!',
         soundInGame: 'Звуки в игре',
         soundOffAria: 'Отключить звуки в игре',
         musicTitle: 'Музыка',
@@ -1146,6 +1245,11 @@ const I18N = {
         gamesGalleryAria: 'Go to Blago Games gallery',
         playersOneAria: 'One player',
         playersTwoAria: 'Two players',
+        speedLabel: 'Speed',
+        speed_slow: 'Slow',
+        speed_normal: 'Normal',
+        speed_fast: 'Fast',
+        slowMoBonus: 'Slow motion!',
         soundInGame: 'Game sounds',
         soundOffAria: 'Mute game sounds',
         musicTitle: 'Music',
@@ -1196,6 +1300,11 @@ const I18N = {
         gamesGalleryAria: 'Μετάβαση στη συλλογή παιχνιδιών Blago Games',
         playersOneAria: 'Ένας παίκτης',
         playersTwoAria: 'Δύο παίκτες',
+        speedLabel: 'Ταχύτητα',
+        speed_slow: 'Αργά',
+        speed_normal: 'Κανονικά',
+        speed_fast: 'Γρήγορα',
+        slowMoBonus: 'Αργή κίνηση!',
         soundInGame: 'Ήχοι παιχνιδιού',
         soundOffAria: 'Σίγαση ήχων παιχνιδιού',
         musicTitle: 'Μουσική',
@@ -1319,6 +1428,13 @@ function applyUiTranslations() {
     if (ml) ml.textContent = t('langLabel');
     const mpl = document.getElementById('menu-player-label');
     if (mpl) mpl.textContent = t('playersOnCamera');
+    const msl = document.getElementById('menu-speed-label');
+    if (msl) msl.textContent = t('speedLabel');
+    for (const speed of Object.keys(OBJECT_SPEEDS)) {
+        document.getElementById(`wrap-opt-speed-${speed}`)?.setAttribute('aria-label', t(`speed_${speed}`));
+        const radio = document.getElementById(`opt-speed-${speed}`);
+        if (radio) radio.checked = objectSpeedSetting === speed;
+    }
     const wpl = document.getElementById('wrap-opt-players-1');
     const wpr = document.getElementById('wrap-opt-players-2');
     if (wpl) wpl.setAttribute('aria-label', t('playersOneAria'));
@@ -1356,6 +1472,7 @@ function applyUiTranslations() {
 
 function showMainMenu() {
     isPlaying = false;
+    resetSlowMo();
     levelComplete = false;
     stopGameMusic();
     clearWordReveal();
@@ -1416,6 +1533,7 @@ function startLevel(levelIndex) {
         wordProgressEl?.classList.add('is-hidden');
     }
     if (cfg.mode === 'board') nextBoardStrikeKind = 'hand';
+    resetSlowMo();
     lastSpawnTime = Date.now();
     lastFrameTime = performance.now();
     resetPoseDisplayState();
@@ -1649,6 +1767,15 @@ optPlayers2?.addEventListener('change', () => {
     if (optPlayers2.checked) applyPlayerModeFromUi(true);
 });
 
+for (const speed of Object.keys(OBJECT_SPEEDS)) {
+    const radio = document.getElementById(`opt-speed-${speed}`);
+    radio?.addEventListener('change', () => {
+        if (!radio.checked) return;
+        objectSpeedSetting = speed;
+        localStorage.setItem(STORAGE_OBJECT_SPEED, speed);
+    });
+}
+
 for (const lang of VOICE_LANGS) {
     const radio = document.getElementById(`opt-lang-${lang}`);
     radio?.addEventListener('change', () => {
@@ -1881,7 +2008,7 @@ async function initializeModels() {
 const fruitEmojiTextures = {};
 
 function initFruitTextures() {
-    const emojis = ['🍌', '🍎', '🍉', '🍊', '🍗', '🥩', '🥦', '🥬', '🍆', '🍅'];
+    const emojis = ['🍌', '🍎', '🍉', '🍊', '🍗', '🥩', '🥦', '🥬', '🍆', '🍅', SLOWMO_BONUS_EMOJI];
     const size = 600; // max size matching largest fruit radius
     for(let e of emojis) {
         const c = document.createElement('canvas');
@@ -2006,10 +2133,15 @@ function getOrCreateGlyphTexture(cacheKey, label, color) {
 }
 
 class Fruit {
-    constructor() {
+    /** @param {{ bonus?: 'slowmo' }} [opts] */
+    constructor(opts = {}) {
         const { w, h, minSide } = gameLayout;
         const levelCfg = getCurrentLevelConfig();
         this.levelMode = levelCfg.mode || 'fruit';
+        /** Бонус — не цель уровня: без очков, без штрафа за пропуск, не занимает место в maxConcurrent */
+        this.bonus = opts.bonus || null;
+        /** Эмодзи (продукт или бонус) крутится свободно; буквы и цифры только покачиваются */
+        this.isEmoji = this.levelMode === 'fruit' || !!this.bonus;
 
         this.x = Math.random() * w * 0.8 + w * 0.1;
         this.y = h + 50;
@@ -2023,12 +2155,18 @@ class Fruit {
         const rLo = minSide * 0.068;
         const rHi = minSide * 0.108;
         let r = Math.min(160, Math.max(36, rLo + Math.random() * (rHi - rLo)));
-        if (this.levelMode !== 'fruit') {
+        if (this.bonus) {
+            r = Math.min(170, r * 1.2);
+        } else if (this.levelMode !== 'fruit') {
             r = Math.min(GLYPH_RADIUS_CAP_PX, Math.max(54, r * GLYPH_RADIUS_SCALE));
         }
         this.radius = r;
 
-        if (this.levelMode === 'fruit') {
+        if (this.bonus) {
+            this.emoji = SLOWMO_BONUS_EMOJI;
+            this.color = SLOWMO_BONUS_COLOR;
+            this.textureRef = fruitEmojiTextures[SLOWMO_BONUS_EMOJI];
+        } else if (this.levelMode === 'fruit') {
             const fruitTypes = [
                 { emoji: '🍌', color: '#ffe135' }, // Banana yellow
                 { emoji: '🍎', color: '#ff0800' }, // Apple red
@@ -2084,7 +2222,7 @@ class Fruit {
         /** Сколько кадров подряд нет пересечения (сброс _wasTouchingHand только после дебаунса) */
         this._noContactFrames = 0;
 
-        if (this.levelMode === 'fruit') {
+        if (this.isEmoji) {
             this.rotation = Math.random() * Math.PI * 2;
             this.rotationSpeed = (Math.random() - 0.5) * 0.1;
         } else {
@@ -2108,7 +2246,7 @@ class Fruit {
 
         if (!this.isSliced) {
             this.rotation += this.rotationSpeed * dt;
-            if (this.levelMode !== 'fruit') {
+            if (!this.isEmoji) {
                 if (this.rotation > GLYPH_MAX_TILT_RAD) {
                     this.rotation = GLYPH_MAX_TILT_RAD;
                     this.rotationSpeed = -Math.abs(this.rotationSpeed);
@@ -2128,7 +2266,7 @@ class Fruit {
         ctx.save();
         ctx.translate(this.x, this.y);
         /** Canvas на экране зеркалится через CSS scaleX(-1) — компенсируем только текст/буквы, чтобы читалось нормально */
-        const compensateCssMirror = this.levelMode !== 'fruit';
+        const compensateCssMirror = !this.isEmoji;
         if (compensateCssMirror) ctx.scale(-1, 1);
 
         const texture = this.textureRef.canvas;
@@ -2137,6 +2275,11 @@ class Fruit {
         
         if (!this.isSliced) {
             ctx.rotate(this.rotation);
+            if (this.bonus) {
+                /** Бонус пульсирует голубым свечением, чтобы его было видно среди предметов */
+                ctx.shadowColor = SLOWMO_BONUS_COLOR;
+                ctx.shadowBlur = 28 + Math.sin(performance.now() / 160) * 14;
+            }
             if (this.hitFlash > 0) {
                 ctx.shadowColor = '#00f3ff';
                 const blurBase = this.levelMode === 'fruit' ? 18 : 26;
@@ -3572,12 +3715,17 @@ function gameLoop(nowTime) {
 
     // Update and draw fruits
     const now = Date.now();
-    const unslicedCount = fruits.filter((f) => !f.isSliced).length;
+    const unslicedCount = fruits.filter((f) => !f.isSliced && !f.bonus).length;
+    const objectDt = dt * objectTimeScale(now);
     /** В режиме слов — строго одна нужная буква на экране, чтобы ребёнок видел ровно ту, что нужна */
     const effectiveMaxConcurrent = levelCfg.mode === 'word' ? 1 : levelCfg.maxConcurrent;
     if (levelCfg.mode !== 'board' && !levelComplete && !wordRevealActive && (levelCfg.mode !== 'word' || now >= wordNextLetterAt) && now - lastSpawnTime >= levelCfg.spawnIntervalMs && unslicedCount < effectiveMaxConcurrent) {
         fruits.push(new Fruit());
         lastSpawnTime = now;
+        if (!levelComplete && shouldSpawnSlowMoBonus(levelCfg, now)) {
+            fruits.push(new Fruit({ bonus: 'slowmo' }));
+            lastSlowMoBonusSpawnAt = now;
+        }
     }
 
     /** Режим «Доски»: обновление, удары рук/ног, спавн новых досок */
@@ -3617,7 +3765,7 @@ function gameLoop(nowTime) {
 
     for (let i = fruits.length - 1; i >= 0; i--) {
         let fruit = fruits[i];
-        fruit.update(dt);
+        fruit.update(objectDt);
         fruit.draw(canvasCtx);
 
         // Рез: путь кончиков пересёк круг предмета (любой сегмент), но засчёт — на «входе» в контакт, не каждый кадр
@@ -3661,7 +3809,7 @@ function gameLoop(nowTime) {
 
         // Remove if out of bounds (bottom)
         if (fruit.y > gameLayout.h + 100) {
-            if (!fruit.isSliced && !levelComplete) handleMiss();
+            if (!fruit.isSliced && !levelComplete && !fruit.bonus) handleMiss();
             fruits.splice(i, 1);
         }
     }
@@ -3692,6 +3840,18 @@ function gameLoop(nowTime) {
         ft.update(dt);
         ft.draw(canvasCtx);
         if (ft.life <= 0) floatingTexts.splice(i, 1);
+    }
+
+    // Замедление: лёгкий голубой оттенок, гаснет вместе с эффектом
+    updateSlowMoIndicator(now);
+    if (now < slowMoUntil) {
+        const left = slowMoUntil - now;
+        const ease = left < SLOWMO_EASE_OUT_MS ? left / SLOWMO_EASE_OUT_MS : 1;
+        canvasCtx.save();
+        canvasCtx.globalAlpha = 0.14 * ease;
+        canvasCtx.fillStyle = SLOWMO_BONUS_COLOR;
+        canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.restore();
     }
 
     // Мягкая вспышка-«сок» на удачный рез

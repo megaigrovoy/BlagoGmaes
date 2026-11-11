@@ -35,6 +35,7 @@
           <div class="hud-row">
             <span id="level-display"></span>
             <span id="combo-display" class="combo-display is-hidden"></span>
+            <span id="slowmo-indicator" class="slowmo-indicator is-hidden"></span>
           </div>
           <div id="word-progress" class="word-progress is-hidden"></div>
           <button type="button" id="btn-back-menu" class="btn-menu btn-back-menu"></button>
@@ -119,6 +120,23 @@
                     <label class="menu-player-pill" id="wrap-opt-players-2">
                       <input type="radio" name="ninja-players" id="opt-players-2" value="2" checked />
                       <span>2</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="menu-player-row menu-speed-row" role="radiogroup" aria-labelledby="menu-speed-label">
+                  <div id="menu-speed-label" class="menu-player-label"></div>
+                  <div class="menu-player-segment menu-player-segment--compact">
+                    <label class="menu-player-pill" id="wrap-opt-speed-slow">
+                      <input type="radio" name="ninja-speed" id="opt-speed-slow" value="slow" />
+                      <span>🐢</span>
+                    </label>
+                    <label class="menu-player-pill" id="wrap-opt-speed-normal">
+                      <input type="radio" name="ninja-speed" id="opt-speed-normal" value="normal" checked />
+                      <span>🐇</span>
+                    </label>
+                    <label class="menu-player-pill" id="wrap-opt-speed-fast">
+                      <input type="radio" name="ninja-speed" id="opt-speed-fast" value="fast" />
+                      <span>🚀</span>
                     </label>
                   </div>
                 </div>

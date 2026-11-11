@@ -79,6 +79,13 @@ export const PRAISE = {
     el: ['Μπράβο!', 'Τέλεια!', 'Ουάου!', 'Φανταστικά!', 'Συνέχισε έτσι!']
 };
 
+/** Бонусы: озвучка при срезе */
+export const BONUS = {
+    ru: { slowmo: 'Замедление!' },
+    en: { slowmo: 'Slow motion!' },
+    el: { slowmo: 'Αργή κίνηση!' }
+};
+
 /** Экран победы — случайная фраза */
 export const WIN = {
     ru: ['Уровень пройден! Ты молодец!', 'Победа! Так держать!'],
@@ -153,7 +160,7 @@ export function voiceKey(text) {
 
 /**
  * Плоский список всего, что озвучивается: { lang, category, key, text }.
- * category совпадает с папкой: letters | numbers | fruit | board | praise | win | words
+ * category совпадает с папкой: letters | numbers | fruit | board | praise | win | bonus | words
  */
 export function voiceLines() {
     const out = [];
@@ -164,6 +171,7 @@ export function voiceLines() {
         for (const [kind, say] of Object.entries(BOARD[lang])) out.push({ lang, category: 'board', key: kind, text: say });
         PRAISE[lang].forEach((say, i) => out.push({ lang, category: 'praise', key: String(i + 1), text: say }));
         WIN[lang].forEach((say, i) => out.push({ lang, category: 'win', key: String(i + 1), text: say }));
+        for (const [kind, say] of Object.entries(BONUS[lang])) out.push({ lang, category: 'bonus', key: kind, text: say });
         for (const [word, , say] of WORDS[lang]) {
             out.push({ lang, category: 'words', key: voiceKey(word), text: say ?? capitalize(word) });
         }
