@@ -86,6 +86,25 @@ export const BONUS = {
     el: { slowmo: 'Αργή κίνηση!' }
 };
 
+/** Подсказки о положении перед камерой (голос + надпись на экране) */
+export const HINTS = {
+    ru: {
+        too_close: 'Отойди немного назад!',
+        out_of_frame: 'Вернись в центр, тебя не видно!',
+        no_player: 'Встань перед камерой!'
+    },
+    en: {
+        too_close: 'Step back a little!',
+        out_of_frame: "Come back to the middle, I can't see you!",
+        no_player: 'Stand in front of the camera!'
+    },
+    el: {
+        too_close: 'Κάνε λίγο πίσω!',
+        out_of_frame: 'Έλα στο κέντρο, δεν σε βλέπω!',
+        no_player: 'Στάσου μπροστά στην κάμερα!'
+    }
+};
+
 /** Экран победы — случайная фраза */
 export const WIN = {
     ru: ['Уровень пройден! Ты молодец!', 'Победа! Так держать!'],
@@ -160,7 +179,7 @@ export function voiceKey(text) {
 
 /**
  * Плоский список всего, что озвучивается: { lang, category, key, text }.
- * category совпадает с папкой: letters | numbers | fruit | board | praise | win | bonus | words
+ * category совпадает с папкой: letters | numbers | fruit | board | praise | win | bonus | hint | words
  */
 export function voiceLines() {
     const out = [];
@@ -172,6 +191,7 @@ export function voiceLines() {
         PRAISE[lang].forEach((say, i) => out.push({ lang, category: 'praise', key: String(i + 1), text: say }));
         WIN[lang].forEach((say, i) => out.push({ lang, category: 'win', key: String(i + 1), text: say }));
         for (const [kind, say] of Object.entries(BONUS[lang])) out.push({ lang, category: 'bonus', key: kind, text: say });
+        for (const [kind, say] of Object.entries(HINTS[lang])) out.push({ lang, category: 'hint', key: kind, text: say });
         for (const [word, , say] of WORDS[lang]) {
             out.push({ lang, category: 'words', key: voiceKey(word), text: say ?? capitalize(word) });
         }

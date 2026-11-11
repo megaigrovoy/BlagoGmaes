@@ -1,6 +1,8 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import { RtmPoseClient } from './src/rtm/client.js';
-import { FRUIT_STEM_BY_EMOJI, LETTERS, VOICE_LANGS, WORDS, voiceKey } from './src/voice/lines.js';
+import { FRUIT_STEM_BY_EMOJI, HINTS, LETTERS, VOICE_LANGS, WORDS, voiceKey } from './src/voice/lines.js';
+import { PlayerTracker } from './src/tracking/playerTracker.js';
+import { PositionHintScheduler, evaluatePlayerPosition } from './src/tracking/positionHints.js';
 
 /** Совпадает с dependencies в package.json — не @latest, стабильнее кэш CDN */
 const MEDIAPIPE_TASKS_VISION_WASM_VER = '0.10.34';
@@ -424,7 +426,7 @@ function warmSfxBuffers(urls, concurrency = 6) {
 function currentLevelSfxUrls(cfg) {
     const urls = [...SLICE_SFX_FALLBACK_POOL];
     /** Похвала и фразы победы нужны в любом режиме */
-    urls.push(...Object.values(voiceMap('praise')), ...Object.values(voiceMap('win')));
+    urls.push(...Object.values(voiceMap('praise')), ...Object.values(voiceMap('win')), ...Object.values(voiceMap('hint')));
     if (SLOWMO_BONUS_MODES.has(cfg?.mode)) urls.push(...Object.values(voiceMap('bonus')));
     if (cfg?.mode === 'fruit') {
         urls.push(...Object.values(voiceMap('fruit')));
@@ -1473,6 +1475,7 @@ function applyUiTranslations() {
 function showMainMenu() {
     isPlaying = false;
     resetSlowMo();
+    resetPositionHints();
     levelComplete = false;
     stopGameMusic();
     clearWordReveal();
@@ -1534,6 +1537,7 @@ function startLevel(levelIndex) {
     }
     if (cfg.mode === 'board') nextBoardStrikeKind = 'hand';
     resetSlowMo();
+    resetPositionHints();
     lastSpawnTime = Date.now();
     lastFrameTime = performance.now();
     resetPoseDisplayState();
@@ -1678,6 +1682,16 @@ function syncPlayerCountRadios() {
     optPlayers2.checked = playerModeCount === 2;
 }
 
+/**
+ * Модель BlazePose: на ПК — full (точнее точки, устойчивее при перекрытиях), на телефонах — lite
+ * (там CPU-делегат, full слишком тяжёлая). Переопределение: ?model=lite|full|heavy
+ */
+function poseModelVariant() {
+    const forced = URL_PARAMS.get('model');
+    if (forced === 'lite' || forced === 'full' || forced === 'heavy') return forced;
+    return trackTuning.mobile ? 'lite' : 'full';
+}
+
 async function createPoseLandmarkerInstance() {
     const vision = visionTasksResolver;
     if (!vision) {
@@ -1685,10 +1699,10 @@ async function createPoseLandmarkerInstance() {
         return;
     }
     const np = playerModeCount === 1 ? 1 : 2;
+    const variant = poseModelVariant();
     const poseOpts = (delegate) => ({
         baseOptions: {
-            modelAssetPath:
-                'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
+            modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${variant}/float16/latest/pose_landmarker_${variant}.task`,
             delegate
         },
         runningMode: 'VIDEO',
@@ -1706,7 +1720,7 @@ async function createPoseLandmarkerInstance() {
             poseLandmarker = await PoseLandmarker.createFromOptions(vision, poseOpts(delegate));
             mediapipePoseDelegate = delegate;
             console.info(
-                `[MediaPipe] pose: ${mediapipePoseDelegate}, numPoses=${np}, mobile=${trackTuning.mobile} — если CPU, игра тяжелее; в DevTools отключите throttling.`
+                `[MediaPipe] pose: ${mediapipePoseDelegate}, model=${variant}, numPoses=${np}, mobile=${trackTuning.mobile} — если CPU, игра тяжелее; в DevTools отключите throttling.`
             );
             return;
         } catch (e) {
@@ -2798,206 +2812,104 @@ function buildSyntheticHandFromPose(poseLandmarks, def) {
 }
 
 /**
- * Трекер игроков поверх MediaPipe: порядок persons между кадрами не гарантирован,
- * а руки игроков легко перекрещиваются — поэтому идентичность держим по КОРПУСУ
- * (плечи + бёдра) и сопоставляем с предсказанным положением прошлого кадра.
- * - дубли (два скелета на одном человеке при перекрытии) отбрасываются;
- * - игрок, пропавший из детекции (загородили), PLAYER_TRACK_HOLD_MS «доезжает»
- *   по инерции и помечается predicted — такие позы рисуются, но не бьют.
+ * Трекер игроков поверх MediaPipe — src/tracking/playerTracker.js: идентичность по корпусу и цвету
+ * одежды, удержание загороженного игрока (predicted — такие позы рисуются, но не бьют).
  * Ключи `Pose#0/#1` постоянны: оставшийся игрок не перескакивает в #0.
  */
-const TORSO_ANCHOR_INDICES = [11, 12, 23, 24];
-/** Точки тела для сравнения двух поз на «дубль» */
-const POSE_COMPARE_INDICES = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26];
-const TORSO_MIN_VISIBILITY = 0.3;
-/** Средняя разница поз (в долях масштаба корпуса), ниже которой это один и тот же человек */
-const DUPLICATE_POSE_DIST = 0.35;
-/** Максимальный сдвиг корпуса между кадрами (в масштабах корпуса) для сопоставления с треком */
-const PLAYER_MATCH_GATE = 1.6;
-/** Сколько держим пропавшего игрока с предсказанием, мс */
-const PLAYER_TRACK_HOLD_MS = 500;
-const PLAYER_VELOCITY_SMOOTH = 0.5;
-/** Затухание скорости на каждом кадре предсказания */
-const PLAYER_COAST_DAMP = 0.8;
-/** Предел скорости корпуса (норм. координаты / мс) — защита от выбросов */
-const PLAYER_MAX_SPEED = 0.004;
-
-/** Map<id, { id, anchor:{x,y,scale}, vx, vy, lm, lastSeenMs, lastUpdateMs }> */
-const playerTracks = new Map();
+const playerTracker = new PlayerTracker();
 /** Ключи поз, которые в текущем кадре предсказаны (игрок не детектирован) */
 const predictedPoseKeys = new Set();
 
+/** Уменьшенный кадр камеры — по нему трекер сравнивает игроков по одежде (нужен только вдвоём) */
+const APPEARANCE_FRAME_WIDTH = 96;
+let appearanceCanvas = null;
+let appearanceCtx = null;
+
+function captureAppearanceFrame() {
+    if (playerModeCount === 1 || !video.videoWidth) return null;
+    const h = Math.max(1, Math.round((APPEARANCE_FRAME_WIDTH * video.videoHeight) / video.videoWidth));
+    if (!appearanceCanvas || appearanceCanvas.height !== h) {
+        appearanceCanvas = document.createElement('canvas');
+        appearanceCanvas.width = APPEARANCE_FRAME_WIDTH;
+        appearanceCanvas.height = h;
+        appearanceCtx = appearanceCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    try {
+        appearanceCtx.drawImage(video, 0, 0, APPEARANCE_FRAME_WIDTH, h);
+        return appearanceCtx.getImageData(0, 0, APPEARANCE_FRAME_WIDTH, h);
+    } catch (_) {
+        return null;
+    }
+}
+
 function resetPlayerTracks() {
-    playerTracks.clear();
+    playerTracker.reset();
     predictedPoseKeys.clear();
 }
 
-function poseTorsoAnchor(lm) {
-    let sx = 0;
-    let sy = 0;
-    let n = 0;
-    for (const minVis of [TORSO_MIN_VISIBILITY, -1]) {
-        for (const i of TORSO_ANCHOR_INDICES) {
-            const p = lm[i];
-            if (!p || (p.visibility ?? 1) < minVis) continue;
-            sx += p.x;
-            sy += p.y;
-            n++;
-        }
-        if (n) break;
-    }
-    if (!n) return null;
-    const ls = lm[11];
-    const rs = lm[12];
-    const lh = lm[23];
-    const rh = lm[24];
-    const shoulderW = ls && rs ? Math.hypot(ls.x - rs.x, ls.y - rs.y) : 0;
-    const torsoH =
-        ls && rs && lh && rh
-            ? Math.hypot((ls.x + rs.x - lh.x - rh.x) * 0.5, (ls.y + rs.y - lh.y - rh.y) * 0.5)
-            : 0;
-    return { x: sx / n, y: sy / n, scale: Math.max(shoulderW, torsoH * 0.6, 0.05) };
-}
-
-function poseMeanVisibility(lm) {
-    let s = 0;
-    for (const i of POSE_COMPARE_INDICES) s += lm[i]?.visibility ?? 0;
-    return s / POSE_COMPARE_INDICES.length;
-}
-
-function arePosesDuplicate(a, b) {
-    const scale = Math.max(a.anchor.scale, b.anchor.scale);
-    let sum = 0;
-    let n = 0;
-    for (const i of POSE_COMPARE_INDICES) {
-        const pa = a.lm[i];
-        const pb = b.lm[i];
-        if (!pa || !pb) continue;
-        sum += Math.hypot(pa.x - pb.x, pa.y - pb.y);
-        n++;
-    }
-    return n > 0 && sum / n / scale < DUPLICATE_POSE_DIST;
-}
-
-/** Перебор назначений трек→кандидат (их максимум по 2) с минимальной суммарной стоимостью */
-function assignCandidatesToTracks(tracks, cands, nowMs) {
-    const cost = tracks.map((t) => {
-        const dt = Math.min(nowMs - t.lastUpdateMs, 200);
-        const px = t.anchor.x + t.vx * dt;
-        const py = t.anchor.y + t.vy * dt;
-        return cands.map((c) => {
-            const d = Math.hypot(c.anchor.x - px, c.anchor.y - py) / Math.max(t.anchor.scale, c.anchor.scale);
-            return d <= PLAYER_MATCH_GATE ? d : Infinity;
-        });
-    });
-    let best = tracks.map(() => -1);
-    let bestCost = Infinity;
-    const cur = tracks.map(() => -1);
-    const used = cands.map(() => false);
-    (function rec(ti, acc) {
-        if (acc >= bestCost) return;
-        if (ti === tracks.length) {
-            const unmatched = used.filter((u) => !u).length;
-            const total = acc + unmatched * PLAYER_MATCH_GATE;
-            if (total < bestCost) {
-                bestCost = total;
-                best = cur.slice();
-            }
-            return;
-        }
-        cur[ti] = -1;
-        rec(ti + 1, acc + PLAYER_MATCH_GATE);
-        for (let ci = 0; ci < cands.length; ci++) {
-            if (used[ci] || cost[ti][ci] === Infinity) continue;
-            used[ci] = true;
-            cur[ti] = ci;
-            rec(ti + 1, acc + cost[ti][ci]);
-            used[ci] = false;
-            cur[ti] = -1;
-        }
-    })(0, 0);
-    return best;
-}
-
-function shiftLandmarks(lm, dx, dy) {
-    return lm.map((p) => (p ? { x: p.x + dx, y: p.y + dy, z: p.z, visibility: p.visibility } : p));
-}
+/** ?debug=track — журнал трекера в window.__trackLog (для автотестов и разбора перестановок) */
+const DEBUG_TRACK_LOG = URL_PARAMS.get('debug') === 'track' ? (window.__trackLog = []) : null;
 
 /** Кадр камеры → стабильный список [{ lm, key, predicted }] */
 function updatePlayerTracks(rawPersons, nowMs) {
-    const maxPlayers = playerModeCount === 1 ? 1 : 2;
-
-    let cands = [];
-    for (const lm of rawPersons ?? []) {
-        const anchor = poseTorsoAnchor(lm);
-        if (anchor) cands.push({ lm, anchor, vis: poseMeanVisibility(lm) });
-    }
-    cands.sort((a, b) => b.vis - a.vis);
-    const unique = [];
-    for (const c of cands) {
-        if (!unique.some((u) => arePosesDuplicate(u, c))) unique.push(c);
-    }
-    cands = unique.slice(0, maxPlayers);
-
-    const tracks = [...playerTracks.values()];
-    const assignment = assignCandidatesToTracks(tracks, cands, nowMs);
-    const usedCands = new Set();
-
-    tracks.forEach((t, ti) => {
-        const ci = assignment[ti];
-        const dt = Math.max(1, nowMs - t.lastUpdateMs);
-        if (ci >= 0) {
-            const c = cands[ci];
-            usedCands.add(ci);
-            const sm = PLAYER_VELOCITY_SMOOTH;
-            const clamp = (v) => Math.max(-PLAYER_MAX_SPEED, Math.min(PLAYER_MAX_SPEED, v));
-            t.vx = clamp(t.vx * (1 - sm) + ((c.anchor.x - t.anchor.x) / dt) * sm);
-            t.vy = clamp(t.vy * (1 - sm) + ((c.anchor.y - t.anchor.y) / dt) * sm);
-            t.anchor = c.anchor;
-            t.lm = c.lm;
-            t.lastSeenMs = nowMs;
-            t.predicted = false;
-        } else if (nowMs - t.lastSeenMs <= PLAYER_TRACK_HOLD_MS) {
-            t.vx *= PLAYER_COAST_DAMP;
-            t.vy *= PLAYER_COAST_DAMP;
-            const dx = t.vx * dt;
-            const dy = t.vy * dt;
-            t.anchor = { x: t.anchor.x + dx, y: t.anchor.y + dy, scale: t.anchor.scale };
-            t.lm = shiftLandmarks(t.lm, dx, dy);
-            t.predicted = true;
-        } else {
-            playerTracks.delete(t.id);
-            return;
-        }
-        t.lastUpdateMs = nowMs;
+    const persons = playerTracker.update(rawPersons, nowMs, {
+        maxPlayers: playerModeCount === 1 ? 1 : 2,
+        frame: rawPersons?.length ? captureAppearanceFrame() : null
     });
-
-    /** Новые игроки: свободные id по порядку X, чтобы при старте вдвоём разметка была предсказуемой */
-    const fresh = cands.filter((_, ci) => !usedCands.has(ci)).sort((a, b) => a.anchor.x - b.anchor.x);
-    for (const c of fresh) {
-        if (playerTracks.size >= maxPlayers) break;
-        let id = 0;
-        while (playerTracks.has(id)) id++;
-        playerTracks.set(id, {
-            id,
-            anchor: c.anchor,
-            vx: 0,
-            vy: 0,
-            lm: c.lm,
-            lastSeenMs: nowMs,
-            lastUpdateMs: nowMs,
-            predicted: false
+    predictedPoseKeys.clear();
+    for (const p of persons) if (p.predicted) predictedPoseKeys.add(p.key);
+    if (DEBUG_TRACK_LOG && DEBUG_TRACK_LOG.length < 20000) {
+        DEBUG_TRACK_LOG.push({
+            t: Math.round(nowMs),
+            raw: rawPersons?.length ?? 0,
+            p: persons.map((q) => ({
+                id: q.id,
+                x: +((q.lm[11].x + q.lm[12].x) / 2).toFixed(3),
+                shoulderW: +Math.abs(q.lm[11].x - q.lm[12].x).toFixed(3),
+                torsoH: +((q.lm[23].y + q.lm[24].y - q.lm[11].y - q.lm[12].y) / 2).toFixed(3),
+                pred: q.predicted
+            }))
         });
     }
+    return persons;
+}
 
-    predictedPoseKeys.clear();
-    return [...playerTracks.values()]
-        .sort((a, b) => a.id - b.id)
-        .map((t) => {
-            const key = `Pose#${t.id}`;
-            if (t.predicted) predictedPoseKeys.add(key);
-            return { lm: t.lm, key };
-        });
+/**
+ * Подсказки о положении перед камерой (src/tracking/positionHints.js): голос + надпись,
+ * если игрок слишком близко, вышел за край или в кадре никого нет.
+ */
+const positionHints = new PositionHintScheduler();
+const positionHintEl = document.getElementById('position-hint');
+let positionHintShown = null;
+function resetPositionHints() {
+    positionHints.reset();
+    showPositionHint(null);
+}
+
+function showPositionHint(kind) {
+    if (kind === positionHintShown) return;
+    positionHintShown = kind;
+    if (!positionHintEl) return;
+    positionHintEl.textContent = kind ? (HINTS[uiLang] ?? HINTS.ru)[kind] : '';
+    positionHintEl.classList.toggle('is-hidden', !kind);
+}
+
+function updatePositionHints(persons, nowMs) {
+    if (!isPlaying || levelComplete) {
+        showPositionHint(null);
+        return;
+    }
+    const visible = persons.filter((p) => !p.predicted);
+    const needFeet = getCurrentLevelConfig().mode === 'board';
+    const issues = visible.map((p) => evaluatePlayerPosition(p.lm, { needFeet }));
+    /** Второй игрок ушёл за край кадра и не вернулся (только трекер MediaPipe знает, как он пропал) */
+    if (visible.length > 0 && !rtmClient && playerTracker.hasExitedPlayer(nowMs)) issues.push('out_of_frame');
+    const { speak, show } = positionHints.update(issues, nowMs);
+    if (speak && soundEffectsEnabled) {
+        const u = voiceUrl('hint', speak);
+        if (u) playOneShotSfx(u, 1.0);
+    }
+    showPositionHint(show);
 }
 
 /**
@@ -3088,8 +3000,8 @@ const POSE_BODY_ALPHA = 0.40;
 const POSE_TELEPORT_THRESHOLD = 0.22;
 const POSE_STATE_TTL_MS = 600;
 /**
- * RTM-позы приходят реже (~15–30 Гц) — постоянный EMA там даёт заметное запаздывание.
- * Для RTM alpha растёт со скоростью точки: мелкий дребезг сглаживается, быстрый взмах проходит почти без задержки.
+ * Постоянный EMA даёт заметное запаздывание на быстрых движениях. Поэтому alpha растёт со скоростью
+ * точки: мелкий дребезг сглаживается, быстрый взмах проходит почти без задержки.
  * Сдвиг за кадр (в долях кадра), при котором сглаживание отключается полностью:
  */
 const POSE_FAST_MOTION = 0.04;
@@ -3120,7 +3032,7 @@ function smoothPoseLandmarks(personKey, rawLm, nowMs) {
         if (!prev || jump > POSE_TELEPORT_THRESHOLD) {
             state.lm[i] = { x: r.x, y: r.y, z: r.z, visibility: r.visibility };
         } else {
-            const alpha = rtmClient ? baseAlpha + (1 - baseAlpha) * Math.min(1, jump / POSE_FAST_MOTION) : baseAlpha;
+            const alpha = baseAlpha + (1 - baseAlpha) * Math.min(1, jump / POSE_FAST_MOTION);
             const va = POSE_VISIBILITY_ALPHA;
             state.lm[i] = {
                 x: prev.x * (1 - alpha) + r.x * alpha,
@@ -3342,6 +3254,7 @@ function gameLoop(nowTime) {
             predictedPoseKeys.clear();
             for (const p of rtmPersons) if (p.predicted) predictedPoseKeys.add(p.key);
             commitPoseTargetsFromFrame(rtmPersons, nowTime);
+            updatePositionHints(rtmPersons, nowTime);
         }
     } else if (lastVideoTime !== video.currentTime) {
         lastVideoTime = video.currentTime;
@@ -3361,7 +3274,9 @@ function gameLoop(nowTime) {
     }
 
     if (gotNewVideoFrame) {
-        commitPoseTargetsFromFrame(updatePlayerTracks(currentPoseResults?.landmarks, nowTime), nowTime);
+        const trackedPersons = updatePlayerTracks(currentPoseResults?.landmarks, nowTime);
+        commitPoseTargetsFromFrame(trackedPersons, nowTime);
+        updatePositionHints(trackedPersons, nowTime);
     }
     updatePoseDisplayLandmarks(nowTime);
 

@@ -898,6 +898,31 @@ canvas {
   100% { transform: scale(1); }
 }
 
+/* --- Подсказка о положении перед камерой --- */
+.position-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 14%;
+  transform: translateX(-50%);
+  max-width: min(90vw, 34rem);
+  padding: 0.7rem 1.3rem;
+  border-radius: 14px;
+  border: 2px solid rgba(255, 225, 53, 0.85);
+  background: rgba(12, 14, 24, 0.86);
+  color: #ffe135;
+  font-size: clamp(1.1rem, 3.2vw, 1.8rem);
+  font-weight: 900;
+  text-align: center;
+  text-shadow: 0 0 10px rgba(255, 225, 53, 0.55);
+  box-shadow: 0 0 22px rgba(255, 225, 53, 0.3);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.position-hint.is-hidden {
+  display: none;
+}
+
 /* --- Бонус «замедление» --- */
 .slowmo-indicator {
   font-size: 1.15rem;
